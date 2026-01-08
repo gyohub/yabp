@@ -1,0 +1,17 @@
+.git
+.gitignore
+.mvn
+mvnw
+mvnw.cmd
+target
+.idea
+.vscode
+*.iml
+*.log
+.DS_Store
+README.md
+docs
+.yabp
+.aws
+.github
+docker-compose.yml

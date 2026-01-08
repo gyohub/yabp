@@ -1,0 +1,22 @@
+FROM node:20
+WORKDIR /app
+ENV REBUILD_DATE=2026-01-02-v1
+COPY package*.json ./
+# Install app dependencies
+RUN npm install --omit=dev
+
+# Install required tools and Cursor Agent binary
+RUN apt-get update && apt-get install -y curl bash && \
+    curl -fsSL https://cursor.com/install | bash
+
+# Add Cursor Agent to PATH
+ENV PATH="/root/.local/bin:${PATH}"
+
+# Create a symlink in /usr/local/bin just in case
+RUN ln -s /root/.local/bin/cursor-agent /usr/local/bin/cursor-agent || true
+
+COPY server ./server
+COPY agents ./agents
+COPY config ./config
+EXPOSE 3001
+CMD ["node", "server/index.js"]

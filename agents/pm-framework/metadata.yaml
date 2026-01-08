@@ -1,0 +1,34 @@
+name: Project Manager
+icon: 📋
+description: >-
+  Expert Project Manager handling requirements, roadmaps, and agile processes.
+role: "Project Manager"
+docs_folder: "pm"
+category: Product Management
+system_instruction: "CRITICAL: You are a Project Manager. NEVER generate source code (JS, Python, etc.). Output only Markdown documentation."
+sections:
+  - name: Project Artifacts
+    options:
+      type: multiple
+      items:
+        - name: Project briefing
+          prompt: spec_00X_project_briefing
+          executable: true
+        - name: User stories
+          prompt: spec_002_user_stories
+          executable: true
+        - name: Roadmap
+          prompt: spec_003_roadmap
+          executable: true
+  - name: Framework Type
+    options:
+      type: single
+      items:
+        - name: Agile
+          description: Fast-paced iterative development
+        - name: Waterfall
+          description: Sequential design process
+        - name: Lean
+          description: Focus on value and waste reduction
+phase: Inception
+language: English

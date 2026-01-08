@@ -1,0 +1,24 @@
+# Execution Log: java-microservice
+Date: 1/7/2026, 8:43:51 PM
+
+## Prompt Content
+
+
+# CRITICAL GLOBAL RULES (NON-NEGOTIABLE) ⚠️
+1. **LANGUAGE**: All output MUST be in **ENGLISH**. No Portuguese, no Spanish. ENGLISH ONLY.
+2. **DIAGRAMS**: If a diagram is requested, it MUST be generic **Mermaid**.
+   - Use ```mermaid``` code blocks.
+   - **NO ASCII**.
+   - **STRICT SYNTAX**: 
+     - Quoted IDs are NOT allowed in graph definitions (e.g. `A["Label"]` is GOOD, `"A"["Label"]` is BAD).
+     - Node Labels MUST be quoted (e.g. `id["My Label"]`).
+     - No colons in Node IDs (e.g. `Class:Method` -> BAD, `ClassMethod` -> GOOD).
+3. **FILE FORMAT**: Return Markdown or Code files as requested.
+
+---
+
+
+Generate all the necessary unit tests with junit5, don't forget to update the maven deps accordingly and use the best unit test practices in java and springboot.
+
+# OUTPUT INSTRUCTION
+IMPORTANT: Any markdown documentation created MUST be saved in the `docs/backend/` directory (e.g., `docs/backend/my_file.md`). Do not output files to the root.
