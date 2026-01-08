@@ -112,7 +112,6 @@ function App() {
             {/* Header */}
             <AppHeader
               onOpenSettings={() => setShowSettings(true)}
-              onOpenInstaller={() => setShowInstaller(true)}
               onOpenWorkflows={() => setShowWorkflows(true)}
               onOpenAgentStudio={() => setShowStudio(true)}
               onNewProject={() => navigate('/new')}

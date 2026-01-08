@@ -38,14 +38,6 @@ const AppHeader = ({ onOpenSettings, onOpenInstaller, onNewProject, onOpenWorkfl
                             <Cpu className="h-5 w-5" />
                         </button>
                     )}
-                    {onOpenInstaller && (
-                        <button
-                            onClick={onOpenInstaller}
-                            className="text-slate-600 hover:text-indigo-600 px-4 py-2 rounded-xl flex items-center text-sm font-semibold transition-colors"
-                        >
-                            <PackagePlus className="mr-2 h-4 w-4" /> Install Agent
-                        </button>
-                    )}
                     {showNewProjectBtn && onNewProject && (
                         <button
                             onClick={onNewProject}

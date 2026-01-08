@@ -1,11 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import {
-    X, Search, Plus, Save, Trash2, Cpu, Eye, Code,
+    X, Search, Plus, Save, Trash2, Cpu, Eye, Code, Copy, Layout,
     CheckCircle2, AlertCircle, Loader2, Power, PowerOff,
-    FileText, ChevronRight, LayoutGrid, User, Settings as SettingsIcon
+    FileText, ChevronRight, LayoutGrid, User, Settings as SettingsIcon,
+    Download, Upload
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+
+const ToggleSwitch = ({ active, onToggle }) => (
+    <button
+        onClick={onToggle}
+        className={`relative w-12 h-6 rounded-full transition-all duration-300 focus:outline-none ${active ? 'bg-indigo-600' : 'bg-slate-200'}`}
+    >
+        <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-all duration-300 transform ${active ? 'translate-x-6' : 'translate-x-0'} shadow-sm`} />
+    </button>
+);
 
 const AgentStudio = ({ onClose }) => {
     const [agents, setAgents] = useState([]);
@@ -96,6 +106,7 @@ const AgentStudio = ({ onClose }) => {
 
             setMetadata({
                 ...agent,
+                id: id, // Ensure ID is exactly the folder name, regardless of what's in YAML
                 expertise: Array.isArray(agent.expertise) ? agent.expertise : [],
                 goals: Array.isArray(agent.goals) ? agent.goals : [],
                 sections: normalizedSections,
@@ -137,10 +148,17 @@ const AgentStudio = ({ onClose }) => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(metadata)
             });
+            const result = await res.json();
             if (res.ok) {
                 // Refresh local agents list
-                const updatedAgents = agents.map(a => a.id === selectedAgentId ? { ...metadata, id: a.id } : a);
+                const updatedAgents = agents.map(a => a.id === selectedAgentId ? result : a);
                 setAgents(updatedAgents);
+
+                // Update selected ID if it changed
+                if (result.id !== selectedAgentId) {
+                    setSelectedAgentId(result.id);
+                }
+
                 await ask({ title: 'Success', message: 'Agent metadata saved successfully.', type: 'success' });
             }
         } catch (error) {
@@ -148,6 +166,14 @@ const AgentStudio = ({ onClose }) => {
         } finally {
             setIsSaving(false);
         }
+    };
+
+    const toggleAgentActive = () => {
+        const newMetadata = { ...metadata, active: !metadata.active };
+        setMetadata(newMetadata);
+
+        // Optimistic update for sidebar
+        setAgents(agents.map(a => a.id === selectedAgentId ? { ...a, active: newMetadata.active } : a));
     };
 
     const handleSavePrompt = async () => {
@@ -169,6 +195,57 @@ const AgentStudio = ({ onClose }) => {
         }
     };
 
+    const handleCloneAgent = async () => {
+        if (!selectedAgentId) return;
+        const confirm = await ask({
+            title: 'Clone Agent',
+            message: `Are you sure you want to clone "${metadata.name}"?`,
+            type: 'info',
+            confirmText: 'Yes, Clone'
+        });
+        if (!confirm) return;
+
+        try {
+            const res = await fetch(`http://localhost:3001/api/agents/${selectedAgentId}/clone`, {
+                method: 'POST'
+            });
+            const newAgent = await res.json();
+            setAgents([...agents, newAgent]);
+            handleSelectAgent(newAgent.id);
+            await ask({ title: 'Success', message: 'Agent cloned successfully!', type: 'success' });
+        } catch (error) {
+            console.error('Failed to clone agent:', error);
+            await ask({ title: 'Error', message: 'Failed to clone agent.', type: 'danger' });
+        }
+    };
+
+    const handleDeleteAgent = async () => {
+        if (!selectedAgentId) return;
+        const confirm = await ask({
+            title: 'Delete Agent',
+            message: `Are you sure you want to delete "${metadata.name}"? This action cannot be undone.`,
+            type: 'danger',
+            confirmText: 'Delete Agent'
+        });
+        if (!confirm) return;
+
+        try {
+            const res = await fetch(`http://localhost:3001/api/agents/${selectedAgentId}`, {
+                method: 'DELETE'
+            });
+            if (res.ok) {
+                const updatedAgents = agents.filter(a => a.id !== selectedAgentId);
+                setAgents(updatedAgents);
+                setMetadata(null);
+                setSelectedAgentId(null);
+                await ask({ title: 'Success', message: 'Agent deleted successfully.', type: 'success' });
+            }
+        } catch (error) {
+            console.error('Failed to delete agent:', error);
+            await ask({ title: 'Error', message: 'Failed to delete agent.', type: 'danger' });
+        }
+    };
+
     const handleAddNewAgent = async () => {
         const name = await ask({ title: 'New Agent', message: 'Enter the name for the new agent:', input: true });
         if (!name) return;
@@ -184,6 +261,51 @@ const AgentStudio = ({ onClose }) => {
             handleSelectAgent(newAgent.id);
         } catch (error) {
             console.error('Failed to create agent:', error);
+        }
+    };
+
+    const handleExportAgent = async () => {
+        if (!selectedAgentId) return;
+        try {
+            window.location.href = `http://localhost:3001/api/agents/${selectedAgentId}/export`;
+        } catch (error) {
+            console.error('Export failed:', error);
+            await ask({ title: 'Error', message: 'Failed to export agent.', type: 'danger' });
+        }
+    };
+
+    const handleImportAgent = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        try {
+            const buffer = await file.arrayBuffer();
+            const res = await fetch('http://localhost:3001/api/agents/import', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/zip' },
+                body: buffer
+            });
+            const result = await res.json();
+            if (res.ok) {
+                // Refresh agents list
+                const agentsRes = await fetch('http://localhost:3001/api/agents');
+                const newAgents = await agentsRes.json();
+                setAgents(newAgents);
+
+                // We use the new agents list to select the agent to ensure state consistency
+                setTimeout(() => {
+                    handleSelectAgent(result.id);
+                }, 50);
+
+                await ask({ title: 'Success', message: `Agent "${result.metadata.name}" installed successfully!`, type: 'success' });
+            } else {
+                await ask({ title: 'Error', message: result.error || 'Import failed.', type: 'danger' });
+            }
+        } catch (error) {
+            console.error('Import failed:', error);
+            await ask({ title: 'Error', message: 'Failed to import agent.', type: 'danger' });
+        } finally {
+            e.target.value = ''; // Reset input
         }
     };
 
@@ -360,7 +482,7 @@ const AgentStudio = ({ onClose }) => {
                         ))}
                     </div>
 
-                    <div className="p-4 border-t border-slate-100">
+                    <div className="p-4 border-t border-slate-100 flex flex-col space-y-2">
                         <button
                             onClick={handleAddNewAgent}
                             className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl text-sm font-bold flex items-center justify-center space-x-2 shadow-lg shadow-slate-200 transition-all hover:scale-[1.02] active:scale-98"
@@ -368,6 +490,21 @@ const AgentStudio = ({ onClose }) => {
                             <Plus className="h-4 w-4" />
                             <span>Create New Agent</span>
                         </button>
+                        <div className="relative">
+                            <input
+                                type="file"
+                                accept=".zip"
+                                onChange={handleImportAgent}
+                                className="absolute inset-0 opacity-0 cursor-pointer"
+                                id="agent-import-input"
+                            />
+                            <button
+                                className="w-full py-3 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-2xl text-sm font-bold flex items-center justify-center space-x-2 transition-all"
+                            >
+                                <Upload className="h-4 w-4" />
+                                <span>Install Agent Package</span>
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -376,38 +513,56 @@ const AgentStudio = ({ onClose }) => {
                     {metadata ? (
                         <>
                             {/* Editor Header */}
-                            <div className="h-20 px-8 border-b border-slate-100 flex items-center justify-between">
-                                <div className="flex items-center space-x-4">
-                                    <div className="text-3xl">{metadata.icon}</div>
-                                    <div>
-                                        <h2 className="text-xl font-black text-slate-800 tracking-tight">{metadata.name}</h2>
+                            <div className="h-20 px-8 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
+                                <div className="flex-1 flex items-center space-x-4 min-w-0">
+                                    <div className="text-3xl flex-shrink-0">{metadata.icon}</div>
+                                    <div className="min-w-0">
+                                        <h2 className="text-xl font-black text-slate-800 tracking-tight truncate">{metadata.name}</h2>
                                         <div className="flex items-center space-x-2">
-                                            <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">{metadata.category}</span>
-                                            <span className="w-1 h-1 bg-slate-300 rounded-full"></span>
-                                            <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">{metadata.role}</span>
+                                            <span className="text-xs font-bold text-slate-400 uppercase tracking-widest truncate">{metadata.category}</span>
+                                            <span className="w-1 h-1 bg-slate-300 rounded-full flex-shrink-0"></span>
+                                            <span className="text-xs font-bold text-slate-400 uppercase tracking-widest truncate">{metadata.role}</span>
                                         </div>
                                     </div>
                                 </div>
 
-                                <div className="flex items-center space-x-3">
+                                <div className="flex items-center space-x-2 ml-4">
                                     <button
-                                        onClick={() => setMetadata({ ...metadata, active: !metadata.active })}
-                                        className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition-all border ${metadata.active
-                                            ? 'bg-green-50 text-green-600 border-green-100 hover:bg-green-100'
-                                            : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'
-                                            }`}
+                                        onClick={handleCloneAgent}
+                                        className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"
+                                        title="Clone Agent"
                                     >
-                                        {metadata.active ? <Power className="h-3.5 w-3.5" /> : <PowerOff className="h-3.5 w-3.5" />}
-                                        <span>{metadata.active ? 'Active' : 'Deactivated'}</span>
+                                        <Copy className="h-4.5 w-4.5" />
                                     </button>
+                                    <button
+                                        onClick={handleDeleteAgent}
+                                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
+                                        title="Delete Agent"
+                                    >
+                                        <Trash2 className="h-4.5 w-4.5" />
+                                    </button>
+                                    <div className="w-px h-6 bg-slate-100 mx-1"></div>
+                                    <div className="flex items-center space-x-3 px-4 py-2 rounded-xl bg-slate-50 border border-slate-100">
+                                        <span className={`text-[10px] font-black uppercase tracking-widest ${metadata.active ? 'text-indigo-600' : 'text-slate-400'}`}>
+                                            {metadata.active ? 'Active' : 'Inactive'}
+                                        </span>
+                                        <ToggleSwitch active={metadata.active} onToggle={toggleAgentActive} />
+                                    </div>
 
+                                    <button
+                                        onClick={handleExportAgent}
+                                        className="flex items-center space-x-2 px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl text-xs font-bold hover:bg-indigo-100 transition-all border border-indigo-100"
+                                    >
+                                        <Download className="h-3.5 w-3.5" />
+                                        <span>Export Agent</span>
+                                    </button>
                                     <button
                                         onClick={activeTab === 'metadata' ? handleSaveMetadata : handleSavePrompt}
                                         disabled={isSaving}
-                                        className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-indigo-100 transition-all flex items-center space-x-2 disabled:opacity-50"
+                                        className={`flex items-center space-x-2 px-6 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all transform active:scale-95 ${isSaving ? 'opacity-50 cursor-not-allowed' : ''}`}
                                     >
                                         {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                                        <span>Save Changes</span>
+                                        <span>{isSaving ? 'Saving...' : 'Save Changes'}</span>
                                     </button>
                                 </div>
                             </div>
@@ -444,7 +599,7 @@ const AgentStudio = ({ onClose }) => {
                                                 <input
                                                     value={metadata.name}
                                                     onChange={(e) => setMetadata({ ...metadata, name: e.target.value })}
-                                                    className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all font-bold text-slate-800"
+                                                    className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all font-bold text-slate-800 caret-indigo-600"
                                                 />
                                             </div>
                                             <div className="space-y-2">
@@ -453,7 +608,7 @@ const AgentStudio = ({ onClose }) => {
                                                     value={metadata.icon}
                                                     onChange={(e) => setMetadata({ ...metadata, icon: e.target.value })}
                                                     placeholder="Example: ⚛️"
-                                                    className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all text-center text-2xl"
+                                                    className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all text-center text-2xl caret-indigo-600"
                                                 />
                                             </div>
                                         </div>
@@ -464,7 +619,7 @@ const AgentStudio = ({ onClose }) => {
                                                 <input
                                                     value={metadata.docs_folder}
                                                     onChange={(e) => setMetadata({ ...metadata, docs_folder: e.target.value })}
-                                                    className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all font-bold text-slate-800"
+                                                    className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all font-bold text-slate-800 caret-indigo-600"
                                                     placeholder="e.g. frontend"
                                                 />
                                             </div>
@@ -473,7 +628,7 @@ const AgentStudio = ({ onClose }) => {
                                                 <input
                                                     value={metadata.category}
                                                     onChange={(e) => setMetadata({ ...metadata, category: e.target.value })}
-                                                    className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all font-bold text-slate-800"
+                                                    className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all font-bold text-slate-800 caret-indigo-600"
                                                     placeholder="e.g. Development"
                                                 />
                                             </div>
@@ -498,7 +653,7 @@ const AgentStudio = ({ onClose }) => {
                                                 <input
                                                     value={metadata.language}
                                                     onChange={(e) => setMetadata({ ...metadata, language: e.target.value })}
-                                                    className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all font-bold text-slate-800"
+                                                    className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all font-bold text-slate-800 caret-indigo-600"
                                                     placeholder="e.g. English"
                                                 />
                                             </div>
@@ -510,7 +665,7 @@ const AgentStudio = ({ onClose }) => {
                                                 list="existing-roles"
                                                 value={metadata.role}
                                                 onChange={(e) => setMetadata({ ...metadata, role: e.target.value })}
-                                                className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all"
+                                                className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all font-bold text-slate-800 caret-indigo-600"
                                                 placeholder="e.g. Senior Architecture Specialist"
                                             />
                                             <datalist id="existing-roles">
@@ -523,7 +678,7 @@ const AgentStudio = ({ onClose }) => {
                                             <textarea
                                                 value={metadata.description}
                                                 onChange={(e) => setMetadata({ ...metadata, description: e.target.value })}
-                                                className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all h-32 resize-none leading-relaxed"
+                                                className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all h-32 resize-none leading-relaxed font-bold text-slate-800 caret-indigo-600"
                                                 placeholder="What does this agent do?"
                                             />
                                         </div>
@@ -544,7 +699,7 @@ const AgentStudio = ({ onClose }) => {
                                                 ))}
                                                 <input
                                                     placeholder="Add expertise..."
-                                                    className="flex-1 min-w-[120px] bg-transparent outline-none text-xs font-bold text-slate-600 placeholder:text-slate-300"
+                                                    className="flex-1 min-w-[120px] bg-transparent outline-none text-xs font-bold text-slate-600 placeholder:text-slate-300 caret-indigo-600"
                                                     onKeyDown={e => {
                                                         if (e.key === 'Enter' && e.target.value.trim()) {
                                                             const val = e.target.value.trim();
@@ -575,7 +730,7 @@ const AgentStudio = ({ onClose }) => {
                                                 ))}
                                                 <input
                                                     placeholder="Add goal..."
-                                                    className="flex-1 min-w-[120px] bg-transparent outline-none text-xs font-bold text-slate-600 placeholder:text-slate-300"
+                                                    className="flex-1 min-w-[120px] bg-transparent outline-none text-xs font-bold text-slate-600 placeholder:text-slate-300 caret-indigo-600"
                                                     onKeyDown={e => {
                                                         if (e.key === 'Enter' && e.target.value.trim()) {
                                                             const val = e.target.value.trim();
@@ -724,7 +879,7 @@ const AgentStudio = ({ onClose }) => {
                                                 ))}
                                                 {prompts.length === 0 && (
                                                     <div className="text-center py-8 border-2 border-dashed border-slate-100 rounded-2xl">
-                                                        <p className="text-[10px] text-slate-300 font-bold uppercase tracking-widest">No prompts created</p>
+                                                        <p className="text-xs text-slate-300 font-bold uppercase tracking-widest">No prompts created</p>
                                                     </div>
                                                 )}
                                             </div>
@@ -760,7 +915,7 @@ const AgentStudio = ({ onClose }) => {
                                                             <textarea
                                                                 value={promptContent}
                                                                 onChange={(e) => setPromptContent(e.target.value)}
-                                                                className="w-full h-full p-8 bg-transparent outline-none font-mono text-sm leading-relaxed text-slate-700 resize-none placeholder:text-slate-300"
+                                                                className="w-full h-full p-8 bg-transparent outline-none font-mono text-sm leading-relaxed text-slate-700 resize-none placeholder:text-slate-300 caret-indigo-600"
                                                                 placeholder="# Enter markdown prompt here..."
                                                             />
                                                         ) : (
@@ -786,13 +941,23 @@ const AgentStudio = ({ onClose }) => {
                             </div>
                         </>
                     ) : (
-                        <div className="flex-1 flex items-center justify-center">
-                            <Loader2 className="h-8 w-8 animate-spin text-slate-200" />
+                        <div className="flex-1 flex flex-col items-center justify-center p-20">
+                            {loading ? (
+                                <Loader2 className="h-12 w-12 animate-spin text-slate-200" />
+                            ) : (
+                                <div className="text-center animate-in fade-in zoom-in-95 duration-500">
+                                    <div className="w-24 h-24 bg-slate-50 rounded-[2.5rem] flex items-center justify-center mx-auto mb-6 border border-slate-100">
+                                        <Cpu className="h-10 w-10 text-slate-200" />
+                                    </div>
+                                    <h3 className="text-xl font-black text-slate-800 mb-2">No Agent Selected</h3>
+                                    <p className="text-slate-400 text-sm max-w-xs mx-auto font-medium">Select an agent from the sidebar or create a new one to start configuring.</p>
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
             </div>
-        </div>
+        </div >
     );
 };
 

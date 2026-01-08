@@ -5,24 +5,33 @@ const AgentInstaller = ({ onClose, onInstalled }) => {
     const [installing, setInstalling] = useState(false);
     const [success, setSuccess] = useState(false);
     const [error, setError] = useState(null);
-    const [zipPath, setZipPath] = useState('');
+    const [selectedFile, setSelectedFile] = useState(null);
+
+    const handleFileSelect = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            setSelectedFile(file);
+            setError(null);
+        }
+    };
 
     const handleInstall = async () => {
-        if (!zipPath) return;
+        if (!selectedFile) return;
         setInstalling(true);
         setError(null);
         try {
-            const res = await fetch('http://localhost:3001/api/agents/install', {
+            const buffer = await selectedFile.arrayBuffer();
+            const res = await fetch('http://localhost:3001/api/agents/import', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ zipPath })
+                headers: { 'Content-Type': 'application/zip' },
+                body: buffer
             });
             const data = await res.json();
-            if (data.success) {
+            if (res.ok && data.success) {
                 setSuccess(true);
-                onInstalled();
+                if (onInstalled) onInstalled();
             } else {
-                setError(data.error);
+                setError(data.error || 'Failed to install agent');
             }
         } catch (e) {
             setError(e.message);
@@ -44,21 +53,23 @@ const AgentInstaller = ({ onClose, onInstalled }) => {
 
                     {!success ? (
                         <div className="space-y-6">
-                            <div className="p-8 border-2 border-dashed border-slate-200 rounded-3xl bg-slate-50 flex flex-col items-center justify-center text-center group hover:border-indigo-400 hover:bg-indigo-50/30 transition-all cursor-pointer">
-                                <div className="p-4 bg-white rounded-2xl shadow-sm mb-4 group-hover:scale-110 transition-transform">
-                                    <Upload className="h-8 w-8 text-indigo-600" />
-                                </div>
-                                <p className="text-sm font-semibold text-slate-700">Select Agent Bundle</p>
-                                <p className="text-xs text-slate-400 mt-1">Select a local path to the agent zip</p>
-
+                            <label className="block p-8 border-2 border-dashed border-slate-200 rounded-3xl bg-slate-50 flex flex-col items-center justify-center text-center group hover:border-indigo-400 hover:bg-indigo-50/30 transition-all cursor-pointer">
                                 <input
-                                    type="text"
-                                    value={zipPath}
-                                    onChange={(e) => setZipPath(e.target.value)}
-                                    placeholder="/absolute/path/to/agent.zip"
-                                    className="mt-6 w-full px-4 py-3 border border-slate-200 rounded-2xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-white shadow-sm"
+                                    type="file"
+                                    accept=".zip"
+                                    onChange={handleFileSelect}
+                                    className="hidden"
                                 />
-                            </div>
+                                <div className="p-4 bg-white rounded-2xl shadow-sm mb-4 group-hover:scale-110 transition-transform">
+                                    <Upload className={`h-8 w-8 ${selectedFile ? 'text-green-500' : 'text-indigo-600'}`} />
+                                </div>
+                                <p className="text-sm font-semibold text-slate-700">
+                                    {selectedFile ? selectedFile.name : 'Select Agent Bundle'}
+                                </p>
+                                <p className="text-xs text-slate-400 mt-1">
+                                    {selectedFile ? 'Ready to install!' : 'Select a .zip file exported from Agent Studio'}
+                                </p>
+                            </label>
 
                             {error && (
                                 <div className="flex items-center p-4 bg-red-50 text-red-600 rounded-2xl text-sm font-medium animate-in slide-in-from-top-2">
@@ -69,7 +80,7 @@ const AgentInstaller = ({ onClose, onInstalled }) => {
 
                             <button
                                 onClick={handleInstall}
-                                disabled={!zipPath || installing}
+                                disabled={!selectedFile || installing}
                                 className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-bold shadow-xl shadow-indigo-100 hover:bg-indigo-700 disabled:opacity-50 transition-all flex items-center justify-center"
                             >
                                 {installing ? 'Hiring...' : 'Install Agent Persona'}

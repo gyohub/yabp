@@ -89,6 +89,98 @@ app.post('/api/config', async (req, res) => {
     }
 });
 
+// Export Agent as ZIP
+app.get('/api/agents/:id/export', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const agentPath = path.join(AGENTS_DIR, id);
+
+        if (!(await fs.pathExists(agentPath))) {
+            return res.status(404).json({ error: 'Agent not found' });
+        }
+
+        const zip = new AdmZip();
+        zip.addLocalFolder(agentPath);
+        const buffer = zip.toBuffer();
+
+        res.set('Content-Type', 'application/zip');
+        res.set('Content-Disposition', `attachment; filename=${id}.zip`);
+        res.send(buffer);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Import Agent from ZIP
+app.post('/api/agents/import', express.raw({ type: 'application/zip', limit: '50mb' }), async (req, res) => {
+    try {
+        if (!req.body || req.body.length === 0) {
+            return res.status(400).json({ error: 'No ZIP data received' });
+        }
+
+        const zip = new AdmZip(req.body);
+        const entries = zip.getEntries();
+        const metadataEntry = entries.find(e => e.entryName === 'metadata.yaml' || e.entryName.endsWith('/metadata.yaml'));
+
+        if (!metadataEntry) {
+            return res.status(400).json({ error: 'Invalid agent package: missing metadata.yaml' });
+        }
+
+        // Get agent ID from name in metadata
+        const metadataContent = metadataEntry.getData().toString('utf8');
+        let metadata = yaml.load(metadataContent);
+        const baseId = metadata.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+        let id = baseId;
+        let agentPath = path.join(AGENTS_DIR, id);
+        let counter = 1;
+
+        while (await fs.pathExists(agentPath)) {
+            id = `${baseId}-${counter++}`;
+            agentPath = path.join(AGENTS_DIR, id);
+        }
+
+        // if id changed, update name in metadata too to distinguish
+        if (id !== baseId) {
+            metadata.name = `${metadata.name} ${counter - 1}`;
+        }
+
+        await fs.ensureDir(agentPath);
+
+        // If the zip was created by zipping the folder itself (id/metadata.yaml)
+        // vs zipping contents (metadata.yaml), we handle both
+        const topLevelDirs = new Set(entries.map(e => e.entryName.split('/')[0]).filter(Boolean));
+        if (topLevelDirs.size === 1) {
+            const rootDir = [...topLevelDirs][0];
+            // Check if rootDir contains metadata.yaml
+            const hasMetadataAtRootSuffix = entries.some(e => e.entryName === `${rootDir}/metadata.yaml`);
+            if (hasMetadataAtRootSuffix) {
+                // Strip the root dir when extracting
+                for (const entry of entries) {
+                    if (entry.isDirectory) continue;
+                    const relativePath = entry.entryName.substring(rootDir.length + 1);
+                    if (!relativePath) continue;
+                    const targetPath = path.join(agentPath, relativePath);
+                    await fs.ensureDir(path.dirname(targetPath));
+                    await fs.writeFile(targetPath, entry.getData());
+                }
+            } else {
+                zip.extractAllTo(agentPath, true);
+            }
+        } else {
+            zip.extractAllTo(agentPath, true);
+        }
+
+        if (id !== baseId) {
+            await fs.writeFile(path.join(agentPath, 'metadata.yaml'), yaml.dump(metadata));
+        }
+
+        res.json({ success: true, id, metadata });
+    } catch (error) {
+        console.error('Import error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // List agents
 app.get('/api/agents', async (req, res) => {
     try {
@@ -100,7 +192,7 @@ app.get('/api/agents', async (req, res) => {
             if (await fs.pathExists(metadataPath)) {
                 const content = await fs.readFile(metadataPath, 'utf8');
                 const metadata = yaml.load(content);
-                agents.push({ id: folder, ...metadata });
+                agents.push({ ...metadata, id: folder });
             }
         }
         res.json(agents);
@@ -140,11 +232,66 @@ app.post('/api/agents', async (req, res) => {
     }
 });
 
+// Delete agent (Phase 63)
+app.delete('/api/agents/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const agentPath = path.join(AGENTS_DIR, id);
+
+        if (!(await fs.pathExists(agentPath))) {
+            return res.status(404).json({ error: 'Agent not found' });
+        }
+
+        await fs.remove(agentPath);
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Clone agent (Phase 63)
+app.post('/api/agents/:id/clone', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const sourcePath = path.join(AGENTS_DIR, id);
+
+        if (!(await fs.pathExists(sourcePath))) {
+            return res.status(404).json({ error: 'Source agent not found' });
+        }
+
+        // Generate new name and ID
+        const metadataPath = path.join(sourcePath, 'metadata.yaml');
+        const metadata = yaml.load(await fs.readFile(metadataPath, 'utf8'));
+
+        let newName = `${metadata.name} Copy`;
+        let newId = newName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+        let targetPath = path.join(AGENTS_DIR, newId);
+
+        let counter = 1;
+        while (await fs.pathExists(targetPath)) {
+            newName = `${metadata.name} Copy ${counter++}`;
+            newId = newName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+            targetPath = path.join(AGENTS_DIR, newId);
+        }
+
+        await fs.copy(sourcePath, targetPath);
+
+        // Update name in new metadata
+        const newMetadata = { ...metadata, name: newName };
+        await fs.writeFile(path.join(targetPath, 'metadata.yaml'), yaml.dump(newMetadata));
+
+        res.json({ id: newId, ...newMetadata });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Update agent metadata (Phase 58)
 app.put('/api/agents/:id/metadata', async (req, res) => {
     try {
-        const { id } = req.params;
-        const metadataPath = path.join(AGENTS_DIR, id, 'metadata.yaml');
+        let { id } = req.params;
+        let agentPath = path.join(AGENTS_DIR, id);
+        let metadataPath = path.join(agentPath, 'metadata.yaml');
 
         if (!(await fs.pathExists(metadataPath))) {
             return res.status(404).json({ error: 'Agent not found' });
@@ -154,9 +301,25 @@ app.put('/api/agents/:id/metadata', async (req, res) => {
         const currentMetadata = yaml.load(currentContent);
 
         const updatedMetadata = { ...currentMetadata, ...req.body };
+
+        // Handle folder renaming if name changed (and it's not a legacy manual edit)
+        let newId = id;
+        if (req.body.name && req.body.name !== currentMetadata.name) {
+            const desiredId = req.body.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+            if (desiredId !== id) {
+                const newAgentPath = path.join(AGENTS_DIR, desiredId);
+                if (!(await fs.pathExists(newAgentPath))) {
+                    await fs.rename(agentPath, newAgentPath);
+                    newId = desiredId;
+                    agentPath = newAgentPath;
+                    metadataPath = path.join(agentPath, 'metadata.yaml');
+                }
+            }
+        }
+
         await fs.writeFile(metadataPath, yaml.dump(updatedMetadata));
 
-        res.json(updatedMetadata);
+        res.json({ id: newId, ...updatedMetadata });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
