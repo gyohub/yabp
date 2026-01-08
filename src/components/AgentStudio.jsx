@@ -13,6 +13,9 @@ const AgentStudio = ({ onClose }) => {
     const [selectedAgentId, setSelectedAgentId] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
 
+    // UX & Feedback State (Phase 59)
+    const [dialog, setDialog] = useState(null); // { title, message, type, confirmText, resolve, reject, input? }
+
     // Editor State
     const [metadata, setMetadata] = useState(null);
     const [prompts, setPrompts] = useState([]);
@@ -22,9 +25,25 @@ const AgentStudio = ({ onClose }) => {
     const [viewMode, setViewMode] = useState('edit'); // edit, preview
     const [activeTab, setActiveTab] = useState('metadata'); // metadata, prompts
 
+    // Esc Key Listener (Phase 59)
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape') onClose();
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [onClose]);
+
     useEffect(() => {
         fetchAgents();
     }, []);
+
+    // Custom Dialog Helper (Phase 59)
+    const ask = ({ title, message, type = 'info', confirmText = 'Confirm', input = false, defaultValue = '' }) => {
+        return new Promise((resolve) => {
+            setDialog({ title, message, type, confirmText, input, defaultValue, resolve });
+        });
+    };
 
     const fetchAgents = async () => {
         setLoading(true);
@@ -51,7 +70,40 @@ const AgentStudio = ({ onClose }) => {
         // Load metadata
         const agent = agents.find(a => a.id === id);
         if (agent) {
-            setMetadata({ ...agent });
+            // Normalize sections/options (Phase 59 legacy support)
+            const normalizedSections = (agent.sections || []).map(section => {
+                let normalizedOptions = [];
+                // Handle new format (array of {id, label})
+                if (Array.isArray(section.options)) {
+                    normalizedOptions = section.options;
+                }
+                // Handle legacy format (options object with items array)
+                else if (section.options && Array.isArray(section.options.items)) {
+                    normalizedOptions = section.options.items.map(item => ({
+                        id: item.id || (item.name ? item.name.toLowerCase().replace(/\s+/g, '-') : 'option'),
+                        label: item.label || item.name || 'Unnamed Option'
+                    }));
+                }
+
+                return {
+                    ...section,
+                    id: section.id || (section.name ? section.name.toLowerCase().replace(/\s+/g, '-') : 'section'),
+                    title: section.title || section.name || 'Unnamed Section',
+                    type: section.type || (section.options && section.options.type) || 'single',
+                    options: normalizedOptions
+                };
+            });
+
+            setMetadata({
+                ...agent,
+                expertise: Array.isArray(agent.expertise) ? agent.expertise : [],
+                goals: Array.isArray(agent.goals) ? agent.goals : [],
+                sections: normalizedSections,
+                docs_folder: agent.docs_folder || '',
+                category: agent.category || '',
+                phase: agent.phase || 'Implementation',
+                language: agent.language || 'English'
+            });
         }
 
         // Load prompts
@@ -89,7 +141,7 @@ const AgentStudio = ({ onClose }) => {
                 // Refresh local agents list
                 const updatedAgents = agents.map(a => a.id === selectedAgentId ? { ...metadata, id: a.id } : a);
                 setAgents(updatedAgents);
-                alert('Metadata saved successfully!');
+                await ask({ title: 'Success', message: 'Agent metadata saved successfully.', type: 'success' });
             }
         } catch (error) {
             console.error('Failed to save metadata:', error);
@@ -108,7 +160,7 @@ const AgentStudio = ({ onClose }) => {
                 body: JSON.stringify({ content: promptContent })
             });
             if (res.ok) {
-                alert('Prompt saved successfully!');
+                await ask({ title: 'Success', message: 'Prompt saved successfully.', type: 'success' });
             }
         } catch (error) {
             console.error('Failed to save prompt:', error);
@@ -118,7 +170,7 @@ const AgentStudio = ({ onClose }) => {
     };
 
     const handleAddNewAgent = async () => {
-        const name = prompt('Enter agent name:');
+        const name = await ask({ title: 'New Agent', message: 'Enter the name for the new agent:', input: true });
         if (!name) return;
 
         try {
@@ -135,8 +187,8 @@ const AgentStudio = ({ onClose }) => {
         }
     };
 
-    const handleAddNewPrompt = () => {
-        const title = prompt('Enter prompt title (e.g. initial_setup):');
+    const handleAddNewPrompt = async () => {
+        const title = await ask({ title: 'New Prompt', message: 'Enter the prompt title (e.g. initial_setup):', input: true });
         if (!title) return;
         const filename = `${title.toLowerCase().replace(/\s+/g, '_')}.md`;
 
@@ -148,7 +200,13 @@ const AgentStudio = ({ onClose }) => {
     };
 
     const handleDeletePrompt = async (prompt) => {
-        if (!window.confirm(`Delete prompt ${prompt.filename}?`)) return;
+        const confirmed = await ask({
+            title: 'Delete Prompt',
+            message: `Are you sure you want to delete "${prompt.filename}"? This cannot be undone.`,
+            type: 'danger',
+            confirmText: 'Delete'
+        });
+        if (!confirmed) return;
 
         try {
             const res = await fetch(`http://localhost:3001/api/agents/${selectedAgentId}/prompts/${prompt.filename}`, {
@@ -172,8 +230,78 @@ const AgentStudio = ({ onClose }) => {
         a.role.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
+    // Get unique roles for smart suggestions (Phase 59)
+    const existingRoles = Array.from(new Set(agents.map(a => a.role))).filter(Boolean);
+
     return (
         <div className="fixed inset-0 z-[60] bg-slate-900/40 backdrop-blur-md flex items-center justify-center p-4">
+            {/* Custom Dialog / Modal (Phase 59) */}
+            {dialog && (
+                <div
+                    className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/20 backdrop-blur-sm animate-in fade-in duration-200"
+                    onClick={() => { if (dialog.type === 'info' || dialog.type === 'success') { setDialog(null); dialog.resolve(true); } else { setDialog(null); dialog.resolve(false); } }}
+                >
+                    <div
+                        className="bg-white w-full max-w-md rounded-3xl shadow-2xl p-8 border border-slate-100 animate-in zoom-in-95 duration-200"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <div className="flex items-center space-x-4 mb-6">
+                            <div className={`p-3 rounded-2xl ${dialog.type === 'danger' ? 'bg-red-50 text-red-500' :
+                                dialog.type === 'success' ? 'bg-green-50 text-green-500' :
+                                    'bg-indigo-50 text-indigo-500'
+                                }`}>
+                                {dialog.type === 'danger' ? <Trash2 className="h-6 w-6" /> :
+                                    dialog.type === 'success' ? <CheckCircle2 className="h-6 w-6" /> :
+                                        <AlertCircle className="h-6 w-6" />}
+                            </div>
+                            <div>
+                                <h3 className="text-xl font-black text-slate-800 tracking-tight">{dialog.title}</h3>
+                                <p className="text-slate-500 text-sm font-medium">{dialog.message}</p>
+                            </div>
+                        </div>
+
+                        {dialog.input && (
+                            <input
+                                autoFocus
+                                id="dialog-input"
+                                defaultValue={dialog.defaultValue}
+                                className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all font-bold text-slate-800 mb-8"
+                                onKeyDown={e => {
+                                    if (e.key === 'Enter') {
+                                        const val = e.target.value;
+                                        setDialog(null);
+                                        dialog.resolve(val);
+                                    }
+                                }}
+                            />
+                        )}
+
+                        <div className="flex space-x-3">
+                            {(dialog.type === 'danger' || dialog.input || dialog.type === 'info') && (
+                                <button
+                                    onClick={() => { setDialog(null); dialog.resolve(false); }}
+                                    className="flex-1 py-4 text-slate-400 font-bold hover:bg-slate-50 rounded-2xl transition-all"
+                                >
+                                    Cancel
+                                </button>
+                            )}
+                            <button
+                                onClick={() => {
+                                    const val = dialog.input ? document.getElementById('dialog-input').value : true;
+                                    setDialog(null);
+                                    dialog.resolve(val);
+                                }}
+                                className={`flex-1 py-4 rounded-2xl font-bold transition-all shadow-lg ${dialog.type === 'danger' ? 'bg-red-500 hover:bg-red-600 text-white shadow-red-100' :
+                                    'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-100'
+                                    }`}
+                            >
+                                {dialog.confirmText}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             <div className="bg-white w-full h-full max-w-7xl rounded-[2.5rem] shadow-2xl flex overflow-hidden border border-slate-200">
                 {/* Sidebar */}
                 <div className="w-80 border-r border-slate-100 flex flex-col bg-slate-50/30">
@@ -208,8 +336,8 @@ const AgentStudio = ({ onClose }) => {
                                 key={agent.id}
                                 onClick={() => handleSelectAgent(agent.id)}
                                 className={`w-full text-left p-3 rounded-2xl transition-all flex items-center space-x-3 group relative ${selectedAgentId === agent.id
-                                        ? 'bg-white shadow-md shadow-indigo-500/5 border border-indigo-100 ring-4 ring-indigo-50'
-                                        : 'hover:bg-white/60 border border-transparent'
+                                    ? 'bg-white shadow-md shadow-indigo-500/5 border border-indigo-100 ring-4 ring-indigo-50'
+                                    : 'hover:bg-white/60 border border-transparent'
                                     }`}
                             >
                                 <div className={`h-10 w-10 rounded-xl flex items-center justify-center text-xl transition-all ${selectedAgentId === agent.id ? 'bg-indigo-50' : 'bg-slate-100 group-hover:bg-indigo-50'
@@ -265,8 +393,8 @@ const AgentStudio = ({ onClose }) => {
                                     <button
                                         onClick={() => setMetadata({ ...metadata, active: !metadata.active })}
                                         className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition-all border ${metadata.active
-                                                ? 'bg-green-50 text-green-600 border-green-100 hover:bg-green-100'
-                                                : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'
+                                            ? 'bg-green-50 text-green-600 border-green-100 hover:bg-green-100'
+                                            : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100'
                                             }`}
                                     >
                                         {metadata.active ? <Power className="h-3.5 w-3.5" /> : <PowerOff className="h-3.5 w-3.5" />}
@@ -330,14 +458,64 @@ const AgentStudio = ({ onClose }) => {
                                             </div>
                                         </div>
 
-                                        <div className="space-y-2">
+                                        <div className="grid grid-cols-2 gap-6">
+                                            <div className="space-y-2">
+                                                <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Docs Folder</label>
+                                                <input
+                                                    value={metadata.docs_folder}
+                                                    onChange={(e) => setMetadata({ ...metadata, docs_folder: e.target.value })}
+                                                    className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all font-bold text-slate-800"
+                                                    placeholder="e.g. frontend"
+                                                />
+                                            </div>
+                                            <div className="space-y-2">
+                                                <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Category</label>
+                                                <input
+                                                    value={metadata.category}
+                                                    onChange={(e) => setMetadata({ ...metadata, category: e.target.value })}
+                                                    className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all font-bold text-slate-800"
+                                                    placeholder="e.g. Development"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-6">
+                                            <div className="space-y-2">
+                                                <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Phase</label>
+                                                <select
+                                                    value={metadata.phase}
+                                                    onChange={(e) => setMetadata({ ...metadata, phase: e.target.value })}
+                                                    className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all font-bold text-slate-800"
+                                                >
+                                                    <option value="Planning">Planning</option>
+                                                    <option value="Implementation">Implementation</option>
+                                                    <option value="Research">Research</option>
+                                                    <option value="Architecture">Architecture</option>
+                                                </select>
+                                            </div>
+                                            <div className="space-y-2">
+                                                <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Language</label>
+                                                <input
+                                                    value={metadata.language}
+                                                    onChange={(e) => setMetadata({ ...metadata, language: e.target.value })}
+                                                    className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all font-bold text-slate-800"
+                                                    placeholder="e.g. English"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-2 relative">
                                             <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Expert Role</label>
                                             <input
+                                                list="existing-roles"
                                                 value={metadata.role}
                                                 onChange={(e) => setMetadata({ ...metadata, role: e.target.value })}
                                                 className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all"
                                                 placeholder="e.g. Senior Architecture Specialist"
                                             />
+                                            <datalist id="existing-roles">
+                                                {existingRoles.map(role => <option key={role} value={role} />)}
+                                            </datalist>
                                         </div>
 
                                         <div className="space-y-2">
@@ -350,6 +528,68 @@ const AgentStudio = ({ onClose }) => {
                                             />
                                         </div>
 
+                                        <div className="space-y-4">
+                                            <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Expertise Areas</label>
+                                            <div className="flex flex-wrap gap-2 p-4 bg-slate-50 border border-slate-200 rounded-2xl min-h-[64px]">
+                                                {Array.isArray(metadata.expertise) && metadata.expertise.map(tag => (
+                                                    <span key={tag} className="flex items-center space-x-1 px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-xl text-xs font-bold border border-indigo-100 animate-in zoom-in-95">
+                                                        <span>{tag}</span>
+                                                        <button
+                                                            onClick={() => setMetadata({ ...metadata, expertise: metadata.expertise.filter(t => t !== tag) })}
+                                                            className="hover:text-indigo-800 transition-colors"
+                                                        >
+                                                            <X className="h-3 w-3" />
+                                                        </button>
+                                                    </span>
+                                                ))}
+                                                <input
+                                                    placeholder="Add expertise..."
+                                                    className="flex-1 min-w-[120px] bg-transparent outline-none text-xs font-bold text-slate-600 placeholder:text-slate-300"
+                                                    onKeyDown={e => {
+                                                        if (e.key === 'Enter' && e.target.value.trim()) {
+                                                            const val = e.target.value.trim();
+                                                            const current = Array.isArray(metadata.expertise) ? metadata.expertise : [];
+                                                            if (!current.includes(val)) {
+                                                                setMetadata({ ...metadata, expertise: [...current, val] });
+                                                            }
+                                                            e.target.value = '';
+                                                        }
+                                                    }}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-4">
+                                            <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Agent Goals</label>
+                                            <div className="flex flex-wrap gap-2 p-4 bg-slate-50 border border-slate-200 rounded-2xl min-h-[64px]">
+                                                {Array.isArray(metadata.goals) && metadata.goals.map(goal => (
+                                                    <span key={goal} className="flex items-center space-x-1 px-3 py-1.5 bg-violet-50 text-violet-600 rounded-xl text-xs font-bold border border-violet-100 animate-in zoom-in-95">
+                                                        <span>{goal}</span>
+                                                        <button
+                                                            onClick={() => setMetadata({ ...metadata, goals: metadata.goals.filter(g => g !== goal) })}
+                                                            className="hover:text-violet-800 transition-colors"
+                                                        >
+                                                            <X className="h-3 w-3" />
+                                                        </button>
+                                                    </span>
+                                                ))}
+                                                <input
+                                                    placeholder="Add goal..."
+                                                    className="flex-1 min-w-[120px] bg-transparent outline-none text-xs font-bold text-slate-600 placeholder:text-slate-300"
+                                                    onKeyDown={e => {
+                                                        if (e.key === 'Enter' && e.target.value.trim()) {
+                                                            const val = e.target.value.trim();
+                                                            const current = Array.isArray(metadata.goals) ? metadata.goals : [];
+                                                            if (!current.includes(val)) {
+                                                                setMetadata({ ...metadata, goals: [...current, val] });
+                                                            }
+                                                            e.target.value = '';
+                                                        }
+                                                    }}
+                                                />
+                                            </div>
+                                        </div>
+
                                         <div className="p-6 bg-slate-900 border border-slate-800 rounded-[2rem] shadow-xl relative overflow-hidden group">
                                             <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-110 transition-transform">
                                                 <Cpu className="h-24 w-24 text-indigo-400" />
@@ -358,14 +598,97 @@ const AgentStudio = ({ onClose }) => {
                                                 <div className="p-4 bg-indigo-500/20 rounded-2xl border border-indigo-500/30">
                                                     <SettingsIcon className="h-6 w-6 text-indigo-300" />
                                                 </div>
-                                                <div>
-                                                    <h3 className="text-lg font-bold text-white mb-1">Advanced Settings</h3>
-                                                    <p className="text-indigo-200/60 text-sm mb-4">Customize how this agent interacts with specific technologies and frameworks.</p>
-                                                    <div className="flex flex-wrap gap-2">
-                                                        {['react', 'node', 'python', 'docker'].map(t => (
-                                                            <span key={t} className="px-3 py-1 bg-white/10 rounded-lg text-[10px] font-bold text-white/80 uppercase tracking-widest">{t}</span>
-                                                        ))}
+                                                <div className="flex-1">
+                                                    <h3 className="text-lg font-bold text-white mb-1">Wizard Configuration</h3>
+                                                    <p className="text-indigo-200/60 text-sm mb-4">Configure the custom wizard sections and options this agent presents during project creation.</p>
+                                                    <div className="space-y-4">
+                                                        <div className="flex flex-wrap gap-2">
+                                                            {Array.isArray(metadata.sections) && metadata.sections.length > 0 ? (
+                                                                metadata.sections.map(s => (
+                                                                    <div key={s.id} className="flex items-center space-x-2 px-3 py-2 bg-indigo-500/10 border border-indigo-500/20 rounded-xl">
+                                                                        <span className="text-[10px] font-bold text-indigo-300 uppercase tracking-widest">{s.title}</span>
+                                                                        <button
+                                                                            onClick={() => setMetadata({ ...metadata, sections: metadata.sections.filter(sec => sec.id !== s.id) })}
+                                                                            className="text-indigo-400 hover:text-white transition-colors"
+                                                                        >
+                                                                            <Trash2 className="h-3 w-3" />
+                                                                        </button>
+                                                                    </div>
+                                                                ))
+                                                            ) : (
+                                                                <p className="text-xs text-slate-500 italic">No custom sections defined.</p>
+                                                            )}
+                                                        </div>
+                                                        <button
+                                                            onClick={async () => {
+                                                                const title = await ask({ title: 'New Section', message: 'Enter section name (e.g. Database):', input: true });
+                                                                if (!title) return;
+                                                                const id = title.toLowerCase().replace(/\s+/g, '-');
+                                                                const newSection = { id, title, type: 'single', options: [] };
+                                                                const current = Array.isArray(metadata.sections) ? metadata.sections : [];
+                                                                setMetadata({ ...metadata, sections: [...current, newSection] });
+                                                            }}
+                                                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all"
+                                                        >
+                                                            Add Wizard Section
+                                                        </button>
                                                     </div>
+
+                                                    {Array.isArray(metadata.sections) && metadata.sections.length > 0 && (
+                                                        <div className="mt-6 space-y-4 pt-6 border-t border-white/5">
+                                                            {metadata.sections.map((section, sIdx) => (
+                                                                <div key={section.id} className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                                                                    <div className="flex justify-between items-center mb-3">
+                                                                        <span className="text-xs font-bold text-white uppercase tracking-widest">{section.title}</span>
+                                                                        <select
+                                                                            value={section.type}
+                                                                            onChange={(e) => {
+                                                                                const newSections = [...metadata.sections];
+                                                                                newSections[sIdx].type = e.target.value;
+                                                                                setMetadata({ ...metadata, sections: newSections });
+                                                                            }}
+                                                                            className="bg-slate-800 text-[10px] font-bold text-indigo-300 rounded-lg px-2 py-1 outline-none border border-white/10"
+                                                                        >
+                                                                            <option value="single">Single Select</option>
+                                                                            <option value="multiple">Multiple Select</option>
+                                                                        </select>
+                                                                    </div>
+                                                                    <div className="flex flex-wrap gap-2 mb-3">
+                                                                        {Array.isArray(section.options) && section.options.map((opt, oIdx) => (
+                                                                            <span key={opt.id} className="flex items-center space-x-1 px-2 py-1 bg-white/5 rounded-lg text-[10px] text-white/60">
+                                                                                <span>{opt.label}</span>
+                                                                                <button
+                                                                                    onClick={() => {
+                                                                                        const newSections = [...metadata.sections];
+                                                                                        newSections[sIdx].options = newSections[sIdx].options.filter((_, idx) => idx !== oIdx);
+                                                                                        setMetadata({ ...metadata, sections: newSections });
+                                                                                    }}
+                                                                                    className="hover:text-white"
+                                                                                >
+                                                                                    <X className="h-2.5 w-2.5" />
+                                                                                </button>
+                                                                            </span>
+                                                                        ))}
+                                                                    </div>
+                                                                    <button
+                                                                        onClick={async () => {
+                                                                            const label = await ask({ title: 'New Option', message: `Add option to ${section.title}:`, input: true });
+                                                                            if (!label) return;
+                                                                            const id = label.toLowerCase().replace(/\s+/g, '-');
+                                                                            const newSections = [...metadata.sections];
+                                                                            const currentOpts = Array.isArray(newSections[sIdx].options) ? newSections[sIdx].options : [];
+                                                                            newSections[sIdx].options = [...currentOpts, { id, label }];
+                                                                            setMetadata({ ...metadata, sections: newSections });
+                                                                        }}
+                                                                        className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 flex items-center space-x-1 uppercase tracking-widest"
+                                                                    >
+                                                                        <Plus className="h-3 w-3" />
+                                                                        <span>Add Option</span>
+                                                                    </button>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
                                                 </div>
                                             </div>
                                         </div>
