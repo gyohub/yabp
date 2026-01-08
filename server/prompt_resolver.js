@@ -39,7 +39,9 @@ export const resolveAgentPrompts = async (agentId, agentPath, selections) => {
         "Monitoring Stack": monitoring,
         "Java Framework": javaFramework,
         "Project Artifacts": projectArtifacts,
-        "Architecture Artifacts": architectureArtifacts
+        "Architecture Artifacts": architectureArtifacts,
+        "Frontend Library": frontendLib,
+        "Backend Framework": framework
     } = selections;
 
     // --- Project Manager Logic ---

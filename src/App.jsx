@@ -7,11 +7,13 @@ import AgentInstaller from './components/AgentInstaller';
 import SettingsView from './components/SettingsView';
 import AppHeader from './components/AppHeader';
 import ConfirmationDialog from './components/ConfirmationDialog';
+import WorkflowTemplateViewer from './components/WorkflowTemplateViewer';
 
 function App() {
   const navigate = useNavigate();
   const [showInstaller, setShowInstaller] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showWorkflows, setShowWorkflows] = useState(false);
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -80,10 +82,18 @@ function App() {
         <SettingsView onClose={() => setShowSettings(false)} />
       )}
 
+      <WorkflowTemplateViewer
+        isOpen={showWorkflows}
+        onClose={() => setShowWorkflows(false)}
+      />
+
       <Routes>
         <Route path="/new" element={
           <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
-            <ProjectCreationWizard onProjectCreated={handleProjectCreated} />
+            <ProjectCreationWizard
+              onProjectCreated={handleProjectCreated}
+              onCancel={() => navigate('/')}
+            />
           </div>
         } />
 
@@ -97,6 +107,7 @@ function App() {
             <AppHeader
               onOpenSettings={() => setShowSettings(true)}
               onOpenInstaller={() => setShowInstaller(true)}
+              onOpenWorkflows={() => setShowWorkflows(true)}
               onNewProject={() => navigate('/new')}
             />
 

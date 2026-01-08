@@ -11,8 +11,72 @@ import {
 } from 'lucide-react';
 import AppHeader from './AppHeader';
 import WorkflowOrchestrator from './WorkflowOrchestrator';
+import WorkflowEditor from './WorkflowEditor';
 import MermaidRenderer from './MermaidRenderer';
 import ConfirmationDialog from './ConfirmationDialog';
+
+const AgentExecutionVisual = ({ agent, logs }) => {
+    const lastLog = logs.length > 0 ? logs[logs.length - 1].text : 'Initializing agent specialized context...';
+
+    return (
+        <div className="flex-1 flex flex-col items-center justify-center bg-white relative overflow-hidden">
+            {/* Animated Background Elements */}
+            <div className="absolute top-1/4 -left-20 w-96 h-96 bg-indigo-100 rounded-full blur-[120px] opacity-30 animate-pulse" />
+            <div className="absolute bottom-1/4 -right-20 w-96 h-96 bg-violet-100 rounded-full blur-[120px] opacity-30 animate-pulse delay-700" />
+
+            <div className="relative z-10 flex flex-col items-center max-w-2xl px-8 text-center">
+                {/* The Core Visual */}
+                <div className="relative mb-20">
+                    {/* Ring Animations */}
+                    <div className="absolute inset-0 scale-[2.5] rounded-full border border-indigo-100 animate-[spin_10s_linear_infinite]" />
+                    <div className="absolute inset-0 scale-[2.2] rounded-full border border-indigo-50 animate-[spin_15s_linear_infinite_reverse]" />
+
+                    {/* The Brain/Agent Core */}
+                    <div className="h-32 w-32 bg-gradient-to-br from-indigo-600 to-violet-600 rounded-[40px] flex items-center justify-center text-white shadow-2xl relative group">
+                        <div className="absolute -inset-4 bg-indigo-500/20 rounded-[48px] blur-xl group-hover:blur-2xl transition-all duration-500 animate-pulse" />
+                        <div className="text-5xl drop-shadow-lg scale-110">
+                            {agent?.icon || <TerminalIcon className="h-12 w-12" />}
+                        </div>
+                    </div>
+
+                    {/* Data Particles */}
+                    <div className="absolute -top-4 -right-4 h-4 w-4 bg-indigo-400 rounded-full animate-bounce delay-100" />
+                    <div className="absolute -bottom-2 -left-6 h-3 w-3 bg-violet-400 rounded-full animate-bounce delay-300" />
+                    <div className="absolute top-1/2 -right-12 h-2 w-2 bg-indigo-300 rounded-full animate-bounce delay-500" />
+                </div>
+
+                <div className="space-y-4">
+                    <div className="inline-flex items-center space-x-2 px-4 py-1.5 bg-indigo-50 rounded-full border border-indigo-100 mb-2">
+                        <span className="relative flex h-2 w-2">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+                        </span>
+                        <span className="text-[10px] font-extrabold text-indigo-600 uppercase tracking-widest">Agent Active</span>
+                    </div>
+
+                    <h2 className="text-3xl font-extrabold text-slate-800 tracking-tight">
+                        {agent?.name || 'Unified Agent'} is <span className="text-indigo-600">Working</span>
+                    </h2>
+                </div>
+
+                {/* Progress Indicators */}
+                <div className="mt-16 w-full max-w-md space-y-6">
+                    <div className="relative h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                        <div className="absolute top-0 left-0 h-full bg-gradient-to-r from-indigo-600 to-violet-600 rounded-full animate-[shimmer_2s_infinite]" style={{ width: '60%' }} />
+                    </div>
+                </div>
+            </div>
+
+            <style dangerouslySetInnerHTML={{
+                __html: `
+                @keyframes shimmer {
+                    0% { transform: translateX(-100%); }
+                    100% { transform: translateX(200%); }
+                }
+            `}} />
+        </div>
+    );
+};
 
 const FileTree = ({ items, onFileSelect, onExecuteFile, onDeleteFile, selectedFile, level = 0 }) => {
     const [expanded, setExpanded] = useState({});
@@ -113,6 +177,33 @@ const ProjectNavigator = ({ onBack }) => {
         isAlert: false,
         onConfirm: null
     });
+
+    const [isWorkflowEditorOpen, setIsWorkflowEditorOpen] = useState(false);
+
+    const handleSaveWorkflow = async (phases) => {
+        try {
+            const updatedConfig = {
+                ...projectConfig,
+                workflow: {
+                    ...(projectConfig?.workflow || {}),
+                    phases
+                }
+            };
+
+            await fetch(`http://localhost:3001/api/projects/${encodeURIComponent(projectName)}/config`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ workflow: updatedConfig.workflow })
+            });
+
+            setProjectConfig(updatedConfig);
+            setIsWorkflowEditorOpen(false);
+            showAlert('Success', 'Workflow updated successfully!', 'success');
+        } catch (e) {
+            console.error('Failed to save workflow', e);
+            showAlert('Error', 'Failed to save workflow configuration');
+        }
+    };
 
     // Helper to close dialog
     const closeDialog = () => setDialogConfig(prev => ({ ...prev, isOpen: false }));
@@ -348,6 +439,18 @@ const ProjectNavigator = ({ onBack }) => {
             .then(data => setGeneratedPrompts(data));
     }, [projectName, loadFiles]);
 
+    // Seamless Real-Time File Sync (Phase 57)
+    useEffect(() => {
+        // Poll more frequently while executing, slightly slower when idle
+        const intervalTime = executing ? 2000 : 5000;
+
+        const interval = setInterval(() => {
+            loadFiles();
+        }, intervalTime);
+
+        return () => clearInterval(interval);
+    }, [executing, loadFiles]);
+
     const handleFileSelect = async (path, runHistory = true) => {
         if (runHistory) {
             const newHistory = history.slice(0, historyIndex + 1);
@@ -382,7 +485,7 @@ const ProjectNavigator = ({ onBack }) => {
 
     const handleExecuteFile = async (path) => {
         setExecuting(true);
-        setActiveTab('console');
+        setActiveTab('explorer');
         try {
             const res = await fetch(`http://localhost:3001/api/projects/${encodeURIComponent(projectName)}/file?path=${encodeURIComponent(path)}`);
             const data = await res.json();
@@ -409,7 +512,7 @@ const ProjectNavigator = ({ onBack }) => {
 
     const runPrompt = async (promptText) => {
         setExecuting(true);
-        setActiveTab('console');
+        setActiveTab('explorer');
         setExecutingAgent({ name: 'Cursor CLI', role: 'Direct Execution', icon: <TerminalIcon className="h-6 w-6" /> });
         const timestamp = new Date().toLocaleTimeString();
         setLogs(prev => [...prev, { type: 'info', text: `[${timestamp}] Initiating Cursor CLI execution (${simulationMode ? 'Simulation' : 'Real'})...`, prompt: promptText }]);
@@ -481,7 +584,7 @@ const ProjectNavigator = ({ onBack }) => {
 
         setExecuting(true);
         setExecutingAgent(selectedAgentForModal);
-        setActiveTab('console');
+        setActiveTab('explorer');
         const timestamp = new Date().toLocaleTimeString();
         setLogs(prev => [...prev, { type: 'info', text: `[${timestamp}] Delegating task to ${selectedAgentForModal.name} (${simulationMode ? 'Simulation' : 'Real'})...`, prompt: promptToRun }]);
 
@@ -762,119 +865,23 @@ const ProjectNavigator = ({ onBack }) => {
                             <WorkflowOrchestrator
                                 agents={allAgents.filter(a => (projectConfig?.agents || []).includes(a.id))}
                                 project={{ name: projectName, config: projectConfig }}
+                                files={files}
                                 onRunPrompt={runPrompt}
-                                onConsultAgent={(agent) => {
+                                onConsultAgent={(agent, prompt) => {
                                     setSelectedAgentForModal(agent);
+                                    if (prompt) setHiddenSystemPrompt(prompt); // Only set if prompt provided
                                 }}
+                                onEditWorkflow={() => setIsWorkflowEditorOpen(true)}
                             />
-                        ) : activeTab === 'console' ? (
-                            <div className="space-y-6 animate-in fade-in slide-in-from-left-4 duration-300">
-                                {/* Active Agent Card */}
-                                <div className="p-5 bg-white border-2 border-slate-100 rounded-2xl shadow-sm relative overflow-hidden group">
-                                    {executing && (
-                                        <div className="absolute inset-0 bg-indigo-50/50 flex items-center justify-center z-10 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                                            <div className="flex items-center space-x-2 text-indigo-600 font-bold text-xs bg-white px-3 py-1.5 rounded-full shadow-sm">
-                                                <Loader2 className="h-3 w-3 animate-spin" />
-                                                <span>Working...</span>
-                                            </div>
-                                        </div>
-                                    )}
-                                    <div className="flex items-center justify-between mb-2">
-                                        <div className="h-10 w-10 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-xl flex items-center justify-center text-white text-lg shadow-indigo-200 shadow-lg">
-                                            {executingAgent?.icon || <TerminalIcon className="h-5 w-5" />}
-                                        </div>
-                                        {executing ? (
-                                            <div className="flex items-center space-x-1.5">
-                                                <span className="relative flex h-2.5 w-2.5">
-                                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                                                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
-                                                </span>
-                                                <span className="text-[10px] font-bold text-green-600 uppercase tracking-wider">Live</span>
-                                            </div>
-                                        ) : (
-                                            <div className="h-2.5 w-2.5 rounded-full bg-slate-300" />
-                                        )}
-                                    </div>
-                                    <div>
-                                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Active Agent</div>
-                                        <div className="font-bold text-slate-800 text-lg leading-tight">{executingAgent?.name || 'Command Line'}</div>
-                                        <div className="text-xs text-slate-500 mt-1 line-clamp-2">{executingAgent?.role || 'Executing direct commands via Cursor CLI'}</div>
-                                    </div>
-                                </div>
-
-                                {/* Activity Feed */}
-                                <div>
-                                    <div className="flex items-center justify-between mb-3 px-1">
-                                        <h4 className="text-xs font-extrabold text-slate-400 uppercase tracking-widest flex items-center">
-                                            <FileCode className="h-3 w-3 mr-1.5" /> Detected Activity
-                                        </h4>
-                                        {logs.length > 0 && <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">{logs.length} logs</span>}
-                                    </div>
-
-                                    <div className="space-y-2">
-                                        {(() => {
-                                            // Simple parser to find file modifications in logs
-                                            const fileActivities = logs
-                                                .filter(l => (
-                                                    l.text.includes('Creating') ||
-                                                    l.text.includes('Updating') ||
-                                                    l.text.includes('Generating') ||
-                                                    l.text.match(/\.(md|js|jsx|ts|tsx|json|yaml|yml|css|html)/)
-                                                ))
-                                                .slice(-5) // Show last 5
-                                                .reverse();
-
-                                            if (fileActivities.length === 0) {
-                                                if (executing) {
-                                                    return (
-                                                        <div className="text-center py-8 border-2 border-dashed border-slate-100 rounded-xl">
-                                                            <Loader2 className="h-5 w-5 text-indigo-400 animate-spin mx-auto mb-2" />
-                                                            <span className="text-xs text-slate-400 font-medium">Waiting for file output...</span>
-                                                        </div>
-                                                    )
-                                                }
-                                                return <div className="p-4 bg-slate-50 rounded-xl text-center text-xs text-slate-400 italic border border-slate-100">No file activity detected yet.</div>;
-                                            }
-
-                                            return fileActivities.map((log, idx) => (
-                                                <div key={idx} className="bg-white border border-slate-100 p-3 rounded-xl shadow-sm text-xs flex items-start space-x-2 animate-in slide-in-from-left-2 duration-300">
-                                                    <div className="mt-0.5">
-                                                        {log.text.toLowerCase().includes('creat') ? <Plus className="h-3.5 w-3.5 text-green-500" /> :
-                                                            log.text.toLowerCase().includes('updat') ? <Edit3 className="h-3.5 w-3.5 text-blue-500" /> :
-                                                                <File className="h-3.5 w-3.5 text-slate-400" />}
-                                                    </div>
-                                                    <div className="flex-1 min-w-0">
-                                                        <div className="truncate text-slate-600 font-medium" title={log.text}>{log.text.replace(/\[.*?\]\s*/, '')}</div>
-                                                        <div className="text-[10px] text-slate-300 mt-0.5">{new Date().toLocaleTimeString()}</div>
-                                                    </div>
-                                                </div>
-                                            ));
-                                        })()}
-                                    </div>
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="animate-pulse space-y-4 px-2">
-                                {[1, 2, 3].map(i => <div key={i} className="h-24 bg-slate-50 rounded-xl w-full" />)}
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="p-4 border-t border-slate-50">
-                        <button
-                            onClick={() => setActiveTab('console')}
-                            className={`w-full flex items-center justify-center space-x-2 py-3 rounded-2xl text-xs font-bold transition-all ${activeTab === 'console' ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}
-                        >
-                            <TerminalIcon className="h-4 w-4" />
-                            <span>Open Console</span>
-                            {executing && <div className="h-2 w-2 rounded-full bg-indigo-500 animate-ping ml-2" />}
-                        </button>
+                        ) : null}
                     </div>
                 </div>
 
-                {/* Main Content */}
+                {/* Main Content Area */}
                 <div className="flex-1 flex flex-col overflow-hidden bg-white">
-                    {activeTab === 'console' ? (
+                    {executing ? (
+                        <AgentExecutionVisual agent={executingAgent} logs={logs} />
+                    ) : activeTab === 'console' ? (
                         <div className="flex-1 flex flex-col bg-slate-950 text-slate-300 font-mono text-xs overflow-hidden">
                             <div className="px-6 py-3 border-b border-slate-800 bg-slate-900/50 flex items-center justify-between">
                                 <div className="flex items-center space-x-2">
@@ -1061,9 +1068,6 @@ const ProjectNavigator = ({ onBack }) => {
                                             )}
                                             Comments
                                         </button>
-                                        <button className="bg-slate-900 text-white px-4 py-2 h-9 justify-center rounded-xl text-xs font-bold shadow-sm hover:scale-[1.02] active:scale-95 transition-all flex items-center">
-                                            <ExternalLink className="h-3.5 w-3.5 mr-2" /> Open in Cursor
-                                        </button>
                                     </div>
                                 </div>
                                 <div className="mt-2 min-w-0">
@@ -1246,296 +1250,298 @@ const ProjectNavigator = ({ onBack }) => {
                                                     <p className="text-[10px] text-slate-300 mt-1">Hover over line numbers to add context.</p>
                                                 </div>
                                             ) : (
-                                                (comments[selectedFile] || []).sort((a, b) => a.line - b.line).map(comment => (
-                                                    <div key={comment.id} className={`bg-white rounded-2xl shadow-sm border ${comment.processed ? 'border-slate-100 opacity-60' : comment.status === 'locked' ? 'border-green-200 bg-green-50/30' : 'border-slate-100'} group transition-all relative overflow-hidden`}>
-                                                        {/* Status Stripe */}
-                                                        {comment.processed && (
-                                                            <div className="absolute top-0 left-0 w-full h-1 bg-slate-300" />
-                                                        )}
-                                                        {!comment.processed && comment.status === 'locked' && (
-                                                            <div className="absolute top-0 left-0 w-full h-1 bg-green-500" />
-                                                        )}
+                                                (comments[selectedFile] || [])
+                                                    .sort((a, b) => a.line - b.line)
+                                                    .map(comment => (
+                                                        <div key={comment.id} className={`bg-white rounded-2xl shadow-sm border ${comment.processed ? 'border-slate-100 opacity-60' : comment.status === 'locked' ? 'border-green-200 bg-green-50/30' : 'border-slate-100'} group transition-all relative overflow-hidden`}>
+                                                            {/* Status Stripe */}
+                                                            {comment.processed && (
+                                                                <div className="absolute top-0 left-0 w-full h-1 bg-slate-300" />
+                                                            )}
+                                                            {!comment.processed && comment.status === 'locked' && (
+                                                                <div className="absolute top-0 left-0 w-full h-1 bg-green-500" />
+                                                            )}
 
-                                                        <div className="p-4">
-                                                            {/* Header */}
-                                                            <div className="flex justify-between items-start mb-3">
-                                                                <div className="flex items-center space-x-2">
-                                                                    <span className="bg-slate-100 text-slate-600 text-[10px] font-mono px-1.5 py-0.5 rounded border border-slate-200">Ln {comment.line}</span>
-                                                                    {comment.processed ? (
-                                                                        <span className="flex items-center text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-full border border-slate-200">
-                                                                            <CheckCircle2 className="h-3 w-3 mr-1" /> Processed
-                                                                        </span>
-                                                                    ) : comment.status === 'locked' && (
-                                                                        <span className="flex items-center text-[10px] font-bold text-green-600 bg-green-100 px-1.5 py-0.5 rounded-full border border-green-200">
-                                                                            <CheckCircle2 className="h-3 w-3 mr-1" /> Approved
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                                <div className="flex items-center space-x-1">
-                                                                    {!comment.processed && comment.status !== 'locked' && (
+                                                            <div className="p-4">
+                                                                {/* Header */}
+                                                                <div className="flex justify-between items-start mb-3">
+                                                                    <div className="flex items-center space-x-2">
+                                                                        <span className="bg-slate-100 text-slate-600 text-[10px] font-mono px-1.5 py-0.5 rounded border border-slate-200">Ln {comment.line}</span>
+                                                                        {comment.processed ? (
+                                                                            <span className="flex items-center text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-full border border-slate-200">
+                                                                                <CheckCircle2 className="h-3 w-3 mr-1" /> Processed
+                                                                            </span>
+                                                                        ) : comment.status === 'locked' && (
+                                                                            <span className="flex items-center text-[10px] font-bold text-green-600 bg-green-100 px-1.5 py-0.5 rounded-full border border-green-200">
+                                                                                <CheckCircle2 className="h-3 w-3 mr-1" /> Approved
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                    <div className="flex items-center space-x-1">
+                                                                        {!comment.processed && comment.status !== 'locked' && (
+                                                                            <button
+                                                                                onClick={() => handleApprove(comment.id)}
+                                                                                className="text-slate-300 hover:text-green-600 p-1 transition-colors"
+                                                                                title="Approve & Lock"
+                                                                            >
+                                                                                <CheckCircle2 className="h-3.5 w-3.5" />
+                                                                            </button>
+                                                                        )}
                                                                         <button
-                                                                            onClick={() => handleApprove(comment.id)}
-                                                                            className="text-slate-300 hover:text-green-600 p-1 transition-colors"
-                                                                            title="Approve & Lock"
+                                                                            onClick={() => handleDelete(comment.id)}
+                                                                            className="text-slate-300 hover:text-red-500 p-1 transition-colors"
+                                                                            title="Delete Thread"
                                                                         >
-                                                                            <CheckCircle2 className="h-3.5 w-3.5" />
+                                                                            <Trash2 className="h-3.5 w-3.5" />
                                                                         </button>
-                                                                    )}
-                                                                    <button
-                                                                        onClick={() => handleDelete(comment.id)}
-                                                                        className="text-slate-300 hover:text-red-500 p-1 transition-colors"
-                                                                        title="Delete Thread"
-                                                                    >
-                                                                        <Trash2 className="h-3.5 w-3.5" />
-                                                                    </button>
+                                                                    </div>
                                                                 </div>
-                                                            </div>
 
-                                                            {/* Main Comment */}
-                                                            <p className="text-xs text-slate-700 leading-relaxed font-medium mb-3">{comment.text}</p>
-                                                            <div className="text-[9px] text-slate-300 mb-4">{new Date(comment.timestamp).toLocaleTimeString()}</div>
+                                                                {/* Main Comment */}
+                                                                <p className="text-xs text-slate-700 leading-relaxed font-medium mb-3">{comment.text}</p>
+                                                                <div className="text-[9px] text-slate-300 mb-4">{new Date(comment.timestamp).toLocaleTimeString()}</div>
 
-                                                            {/* Replies */}
-                                                            {comment.replies && comment.replies.length > 0 && (
-                                                                <div className="space-y-3 pl-3 border-l-2 border-slate-100 mb-4">
-                                                                    {comment.replies.map(reply => (
-                                                                        <div key={reply.id} className="relative group/reply">
-                                                                            <p className="text-xs text-slate-600 leading-relaxed">{reply.text}</p>
-                                                                            <div className="flex items-center justify-between mt-1">
-                                                                                <span className="text-[9px] text-slate-300">{new Date(reply.timestamp).toLocaleTimeString()}</span>
-                                                                                <button
-                                                                                    onClick={() => handleDelete(comment.id, reply.id)}
-                                                                                    className="text-slate-200 hover:text-red-400 opacity-0 group-hover/reply:opacity-100 transition-opacity"
-                                                                                >
-                                                                                    <Trash2 className="h-3 w-3" />
-                                                                                </button>
+                                                                {/* Replies */}
+                                                                {comment.replies && comment.replies.length > 0 && (
+                                                                    <div className="space-y-3 pl-3 border-l-2 border-slate-100 mb-4">
+                                                                        {comment.replies.map(reply => (
+                                                                            <div key={reply.id} className="relative group/reply">
+                                                                                <p className="text-xs text-slate-600 leading-relaxed">{reply.text}</p>
+                                                                                <div className="flex items-center justify-between mt-1">
+                                                                                    <span className="text-[9px] text-slate-300">{new Date(reply.timestamp).toLocaleTimeString()}</span>
+                                                                                    <button
+                                                                                        onClick={() => handleDelete(comment.id, reply.id)}
+                                                                                        className="text-slate-200 hover:text-red-400 opacity-0 group-hover/reply:opacity-100 transition-opacity"
+                                                                                    >
+                                                                                        <Trash2 className="h-3 w-3" />
+                                                                                    </button>
+                                                                                </div>
                                                                             </div>
-                                                                        </div>
-                                                                    ))}
-                                                                </div>
-                                                            )}
+                                                                        ))}
+                                                                    </div>
+                                                                )}
 
-                                                            {/* Reply Input */}
-                                                            {comment.status !== 'locked' ? (
-                                                                <div className="flex items-center mt-2">
-                                                                    <input
-                                                                        type="text"
-                                                                        placeholder="Reply..."
-                                                                        value={replyTexts[comment.id] || ''}
-                                                                        onChange={(e) => setReplyTexts(prev => ({ ...prev, [comment.id]: e.target.value }))}
-                                                                        onKeyDown={(e) => {
-                                                                            if (e.key === 'Enter') {
-                                                                                handleReply(comment.id, replyTexts[comment.id]);
-                                                                                setReplyTexts(prev => ({ ...prev, [comment.id]: '' }));
-                                                                            }
-                                                                        }}
-                                                                        className="flex-1 text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 focus:ring-2 focus:ring-indigo-500/20 outline-none"
-                                                                    />
-                                                                    <button
-                                                                        onClick={() => {
-                                                                            handleReply(comment.id, replyTexts[comment.id]);
-                                                                            setReplyTexts(prev => ({ ...prev, [comment.id]: '' }));
-                                                                        }}
-                                                                        disabled={!replyTexts[comment.id]}
-                                                                        className="ml-2 p-1.5 bg-slate-100 text-slate-400 rounded-lg hover:bg-indigo-600 hover:text-white transition-colors disabled:opacity-50"
-                                                                    >
-                                                                        <Send className="h-3 w-3" />
-                                                                    </button>
-                                                                </div>
-                                                            ) : (
-                                                                <div className="bg-slate-50 rounded-lg p-2 text-[10px] text-slate-400 italic text-center border border-slate-100">
-                                                                    Thread locked 🔒
-                                                                </div>
-                                                            )}
+                                                                {/* Reply Input */}
+                                                                {comment.status !== 'locked' && (
+                                                                    <div className="flex items-center mt-2">
+                                                                        <input
+                                                                            type="text"
+                                                                            placeholder="Reply..."
+                                                                            value={replyTexts[comment.id] || ''}
+                                                                            onChange={(e) => setReplyTexts(prev => ({ ...prev, [comment.id]: e.target.value }))}
+                                                                            onKeyDown={(e) => {
+                                                                                if (e.key === 'Enter') {
+                                                                                    handleReply(comment.id, replyTexts[comment.id]);
+                                                                                    setReplyTexts(prev => ({ ...prev, [comment.id]: '' }));
+                                                                                }
+                                                                            }}
+                                                                            className="flex-1 text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 focus:ring-2 focus:ring-indigo-500/20 outline-none"
+                                                                        />
+                                                                    </div>
+                                                                )}
+                                                            </div>
                                                         </div>
-                                                    </div>
-                                                ))
-                                            )}
-
-                                            <div className="mt-8 p-4 bg-blue-50/50 rounded-xl border border-blue-100">
-                                                <h5 className="flex items-center text-xs font-bold text-blue-700 mb-2">
-                                                    <Bot className="h-3.5 w-3.5 mr-2" />
-                                                    Agent Awareness
-                                                </h5>
-                                                <p className="text-[10px] text-blue-600/80 leading-relaxed">
-                                                    Only <strong>Approved</strong> (locked) comments will be seen by the agent.
-                                                </p>
-                                            </div>
+                                                    ))
+                                            )
+                                            }
                                         </div>
                                     </div>
                                 )}
                             </div>
                         </div>
+
                     ) : (
-                        <div className="flex-1 flex flex-col items-center justify-center bg-slate-50/30">
-                            <div className="relative">
-                                <div className="h-32 w-32 bg-indigo-100 rounded-[48px] rotate-12 absolute inset-0 blur-2xl opacity-20" />
-                                <div className="p-10 bg-white rounded-[48px] shadow-xl border border-slate-100 relative mb-8">
-                                    <Sparkles className="h-20 w-20 text-indigo-500" />
-                                </div>
-                            </div>
-                            <h2 className="text-2xl font-bold text-slate-900 mb-2">Ready to explore?</h2>
-                            <p className="text-slate-500 max-w-xs text-center font-medium">Select a file from the explorer or run a prompt to evolve your project</p>
+                        <div className="flex flex-col items-center justify-center h-full text-slate-400">
+                            <FileText className="w-16 h-16 mb-4 opacity-20" />
+                            <p>Select a file from the sidebar to view content</p>
                         </div>
                     )}
-                </div>
-
-                {/* Agent Interaction Modal */}
-                {
-                    selectedAgentForModal && (
-                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 scale-95 animate-in fade-in zoom-in duration-200">
-                            <div className="bg-white w-full max-w-lg rounded-[40px] shadow-2xl overflow-hidden border border-slate-100">
-                                <div className="p-8">
-                                    <div className="flex justify-between items-start mb-8">
-                                        <div className="flex items-center space-x-4">
-                                            <div className="bg-indigo-600 p-4 rounded-[28px] shadow-lg shadow-indigo-200">
-                                                <Bot className="h-8 w-8 text-white" />
-                                            </div>
-                                            <div>
-                                                <h2 className="text-2xl font-bold text-slate-900 leading-tight">{selectedAgentForModal.name}</h2>
-                                                <p className="text-sm font-medium text-slate-400 mt-1 flex items-center">
-                                                    <div className="h-2 w-2 rounded-full bg-green-500 mr-2 animate-pulse" />
-                                                    Active Collaboration Persona
-                                                </p>
-                                            </div>
-                                        </div>
-                                        <button
-                                            onClick={() => setSelectedAgentForModal(null)}
-                                            className="p-3 hover:bg-slate-100 rounded-2xl text-slate-400 transition-all active:scale-90"
-                                        >
-                                            <X className="h-6 w-6" />
-                                        </button>
-                                    </div>
-
-                                    <div className="bg-slate-50 p-6 rounded-[32px] border border-slate-100 mb-8">
-                                        <div className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-2">Agent Capability</div>
-                                        <p className="text-slate-600 text-sm leading-relaxed italic">
-                                            "{selectedAgentForModal.description || 'I am ready to help you evolve your project. Describe what you need me to fulfill.'}"
-                                        </p>
-                                    </div>
-
-                                    {/* Guarded Assign Task Logic */}
-                                    {(() => {
-                                        // Helper defined in render scope for simplicity, or could be moved up
-                                        const hasPendingComments = (comments[selectedFile] || []).some(c => !c.processed && c.status !== 'locked');
-                                        // We are not defining the handler here, just using variables. 
-                                        // Handler is defined above in component scope.
-                                        return null;
-                                    })()}
-
-
-                                    <div className="flex items-center justify-between mb-4 px-2">
-                                        <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-                                            Execution Mode
-                                        </div>
-                                        <div className="flex items-center space-x-2 bg-slate-100 p-1 rounded-lg">
-                                            <button
-                                                onClick={() => setSimulationMode(true)}
-                                                className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center ${simulationMode ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                                            >
-                                                <Sparkles className="h-3 w-3 mr-1.5" /> Simulation
-                                            </button>
-                                            <button
-                                                onClick={() => setSimulationMode(false)}
-                                                className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center ${!simulationMode ? 'bg-white text-green-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                                            >
-                                                <TerminalIcon className="h-3 w-3 mr-1.5" /> Real
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    <div className="space-y-4">
-                                        <div className="relative">
-                                            <textarea
-                                                value={agentPrompt}
-                                                onChange={(e) => setAgentPrompt(e.target.value)}
-                                                placeholder={`What should the ${selectedAgentForModal.name} do now?`}
-                                                className="w-full bg-white border-2 border-slate-100 rounded-[32px] p-6 pr-14 text-sm focus:border-indigo-600 focus:ring-8 focus:ring-indigo-500/5 outline-none font-medium leading-relaxed shadow-sm min-h-[120px] resize-none transition-all placeholder:text-slate-300"
-                                                autoFocus
-                                            />
-                                            <div className="absolute top-4 right-4 p-2 bg-indigo-50 rounded-xl">
-                                                <MessageSquare className="h-5 w-5 text-indigo-600" />
-                                            </div>
-                                        </div>
-
-                                        <button
-                                            onClick={handleAssignTaskRequest}
-                                            disabled={(!agentPrompt && !hiddenSystemPrompt) || executing}
-                                            className="w-full bg-slate-900 text-white py-5 rounded-[32px] font-bold shadow-2xl shadow-slate-200 hover:bg-slate-800 disabled:opacity-50 transition-all flex items-center justify-center active:scale-[0.98]"
-                                        >
-                                            {executing ? (
-                                                <Loader2 className="h-5 w-5 animate-spin mr-3" />
-                                            ) : (
-                                                <Send className="h-5 w-5 mr-3" />
-                                            )}
-                                            {executing ? 'Agent is Working...' : 'Assign Task to Agent'}
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                {/* Add Agent Modal */}
-                {isAddAgentOpen && (
-                    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 scale-95 animate-in fade-in zoom-in duration-200">
-                        <div className="bg-white w-full max-w-lg rounded-[40px] shadow-2xl overflow-hidden border border-slate-100 max-h-[80vh] flex flex-col">
-                            <div className="p-8 border-b border-slate-100">
-                                <div className="flex justify-between items-center">
-                                    <h2 className="text-xl font-bold text-slate-900">Hire New Agent</h2>
-                                    <button
-                                        onClick={() => setIsAddAgentOpen(false)}
-                                        className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+                    {activeTab === 'prompts' && (
+                        <div className="flex-1 overflow-hidden p-6">
+                            <h3 className="text-lg font-bold mb-4 flex items-center">
+                                <TerminalIcon className="w-5 h-5 mr-2 text-indigo-600" />
+                                Available Prompts
+                            </h3>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                {generatedPrompts.map((prompt, idx) => (
+                                    <div key={idx} className="bg-white p-4 rounded-xl border border-slate-100 hover:border-indigo-200 transition-all cursor-pointer group"
+                                        onClick={() => {
+                                            setSelectedAgentForModal({ name: 'System', id: 'system' });
+                                            setAgentPrompt(prompt.body);
+                                        }}
                                     >
-                                        <X className="h-6 w-6 text-slate-400" />
-                                    </button>
-                                </div>
-                                <p className="text-sm text-slate-500 mt-1">Select an agent to join the project team.</p>
+                                        <div className="font-bold text-slate-700 mb-1 group-hover:text-indigo-600">{prompt.title}</div>
+                                        <div className="text-xs text-slate-400">Click to load into Agent console</div>
+                                    </div>
+                                ))}
                             </div>
+                        </div>
+                    )}
 
-                            <div className="flex-1 overflow-y-auto p-6 space-y-3 custom-scrollbar">
-                                {allAgents
-                                    .filter(a => !(projectConfig?.agents || []).includes(a.id))
-                                    .map(agent => (
-                                        <div key={agent.id} className="p-4 bg-slate-50 border border-slate-100 rounded-2xl flex justify-between items-center hover:bg-indigo-50 hover:border-indigo-100 transition-all group">
-                                            <div className="flex items-center space-x-3">
-                                                <div className="text-2xl">{agent.icon}</div>
+                    {
+                        selectedAgentForModal && (
+                            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 scale-95 animate-in fade-in zoom-in duration-200">
+                                <div className="bg-white w-full max-w-lg rounded-[40px] shadow-2xl overflow-hidden border border-slate-100">
+                                    <div className="p-8">
+                                        <div className="flex justify-between items-start mb-8">
+                                            <div className="flex items-center space-x-4">
+                                                <div className="bg-indigo-600 p-4 rounded-[28px] shadow-lg shadow-indigo-200">
+                                                    <Bot className="h-8 w-8 text-white" />
+                                                </div>
                                                 <div>
-                                                    <div className="font-bold text-slate-800 text-sm">{agent.name}</div>
-                                                    <div className="text-[10px] text-slate-500 font-medium">{agent.category}</div>
+                                                    <h2 className="text-2xl font-bold text-slate-900 leading-tight">{selectedAgentForModal.name}</h2>
+                                                    <p className="text-sm font-medium text-slate-400 mt-1 flex items-center">
+                                                        <div className="h-2 w-2 rounded-full bg-green-500 mr-2 animate-pulse" />
+                                                        Active Collaboration Persona
+                                                    </p>
                                                 </div>
                                             </div>
                                             <button
-                                                onClick={() => handleAddAgent(agent.id)}
-                                                disabled={addingAgent}
-                                                className="px-3 py-1.5 bg-white text-slate-600 text-xs font-bold rounded-lg border border-slate-200 group-hover:bg-indigo-600 group-hover:text-white group-hover:border-indigo-600 transition-all"
+                                                onClick={() => setSelectedAgentForModal(null)}
+                                                className="p-3 hover:bg-slate-100 rounded-2xl text-slate-400 transition-all active:scale-90"
                                             >
-                                                {addingAgent ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Hire'}
+                                                <X className="h-6 w-6" />
                                             </button>
                                         </div>
-                                    ))}
-                                {allAgents.filter(a => !(projectConfig?.agents || []).includes(a.id)).length === 0 && (
-                                    <div className="text-center py-8 text-slate-400 italic text-sm">
-                                        All available agents are already on the team!
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                )}
-            </div>
 
-            {/* Confirmation Dialog */}
-            <ConfirmationDialog
-                isOpen={dialogConfig.isOpen}
-                onClose={closeDialog}
-                onConfirm={dialogConfig.onConfirm}
-                title={dialogConfig.title}
-                message={dialogConfig.message}
-                type={dialogConfig.type}
-                isAlert={dialogConfig.isAlert}
-                confirmText={dialogConfig.confirmText}
-            />
+                                        <div className="bg-slate-50 p-6 rounded-[32px] border border-slate-100 mb-8">
+                                            <div className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-2">Agent Capability</div>
+                                            <p className="text-slate-600 text-sm leading-relaxed italic">
+                                                "{selectedAgentForModal.description || 'I am ready to help you evolve your project. Describe what you need me to fulfill.'}"
+                                            </p>
+                                        </div>
+
+                                        {/* Guarded Assign Task Logic */}
+                                        {(() => {
+                                            // Helper defined in render scope for simplicity, or could be moved up
+                                            const hasPendingComments = (comments[selectedFile] || []).some(c => !c.processed && c.status !== 'locked');
+                                            // We are not defining the handler here, just using variables.
+                                            // Handler is defined above in component scope.
+                                            return null;
+                                        })()}
+
+
+                                        <div className="flex items-center justify-between mb-4 px-2">
+                                            <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                                                Execution Mode
+                                            </div>
+                                            <div className="flex items-center space-x-2 bg-slate-100 p-1 rounded-lg">
+                                                <button
+                                                    onClick={() => setSimulationMode(true)}
+                                                    className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center ${simulationMode ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                                                >
+                                                    <Sparkles className="h-3 w-3 mr-1.5" /> Simulation
+                                                </button>
+                                                <button
+                                                    onClick={() => setSimulationMode(false)}
+                                                    className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center ${!simulationMode ? 'bg-white text-green-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                                                >
+                                                    <TerminalIcon className="h-3 w-3 mr-1.5" /> Real
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-4">
+                                            <div className="relative">
+                                                <textarea
+                                                    value={agentPrompt}
+                                                    onChange={(e) => setAgentPrompt(e.target.value)}
+                                                    placeholder={`What should the ${selectedAgentForModal.name} do now?`}
+                                                    className="w-full bg-white border-2 border-slate-100 rounded-[32px] p-6 pr-14 text-sm focus:border-indigo-600 focus:ring-8 focus:ring-indigo-500/5 outline-none font-medium leading-relaxed shadow-sm min-h-[120px] resize-none transition-all placeholder:text-slate-300"
+                                                    autoFocus
+                                                />
+                                                <div className="absolute top-4 right-4 p-2 bg-indigo-50 rounded-xl">
+                                                    <MessageSquare className="h-5 w-5 text-indigo-600" />
+                                                </div>
+                                            </div>
+
+                                            <button
+                                                onClick={handleAssignTaskRequest}
+                                                disabled={(!agentPrompt && !hiddenSystemPrompt) || executing}
+                                                className="w-full bg-slate-900 text-white py-5 rounded-[32px] font-bold shadow-2xl shadow-slate-200 hover:bg-slate-800 disabled:opacity-50 transition-all flex items-center justify-center active:scale-[0.98]"
+                                            >
+                                                {executing ? (
+                                                    <Loader2 className="h-5 w-5 animate-spin mr-3" />
+                                                ) : (
+                                                    <Send className="h-5 w-5 mr-3" />
+                                                )}
+                                                {executing ? 'Agent is Working...' : 'Assign Task to Agent'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )
+                    }
+
+                    {
+                        isWorkflowEditorOpen && (
+                            <WorkflowEditor
+                                initialPhases={projectConfig?.workflow?.phases}
+                                availableAgents={allAgents}
+                                onSave={handleSaveWorkflow}
+                                onCancel={() => setIsWorkflowEditorOpen(false)}
+                            />
+                        )
+                    }
+
+                    {/* Add Agent Modal */}
+                    {
+                        isAddAgentOpen && (
+                            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 scale-95 animate-in fade-in zoom-in duration-200">
+                                <div className="bg-white w-full max-w-lg rounded-[40px] shadow-2xl overflow-hidden border border-slate-100 max-h-[80vh] flex flex-col">
+                                    <div className="p-8 border-b border-slate-100">
+                                        <div className="flex justify-between items-center">
+                                            <h2 className="text-xl font-bold text-slate-900">Hire New Agent</h2>
+                                            <button
+                                                onClick={() => setIsAddAgentOpen(false)}
+                                                className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+                                            >
+                                                <X className="h-6 w-6 text-slate-400" />
+                                            </button>
+                                        </div>
+                                        <p className="text-sm text-slate-500 mt-1">Select an agent to join the project team.</p>
+                                    </div>
+
+                                    <div className="flex-1 overflow-y-auto p-6 space-y-3 custom-scrollbar">
+                                        {allAgents
+                                            .filter(a => !(projectConfig?.agents || []).includes(a.id))
+                                            .map(agent => (
+                                                <div key={agent.id} className="p-4 bg-slate-50 border border-slate-100 rounded-2xl flex justify-between items-center hover:bg-indigo-50 hover:border-indigo-100 transition-all group">
+                                                    <div className="flex items-center space-x-3">
+                                                        <div className="text-2xl">{agent.icon}</div>
+                                                        <div>
+                                                            <div className="font-bold text-slate-800 text-sm">{agent.name}</div>
+                                                            <div className="text-[10px] text-slate-500 font-medium">{agent.category}</div>
+                                                        </div>
+                                                    </div>
+                                                    <button
+                                                        onClick={() => handleAddAgent(agent.id)}
+                                                        disabled={addingAgent}
+                                                        className="px-3 py-1.5 bg-white text-slate-600 text-xs font-bold rounded-lg border border-slate-200 group-hover:bg-indigo-600 group-hover:text-white group-hover:border-indigo-600 transition-all"
+                                                    >
+                                                        {addingAgent ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Hire'}
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        {allAgents.filter(a => !(projectConfig?.agents || []).includes(a.id)).length === 0 && (
+                                            <div className="text-center py-8 text-slate-400 italic text-sm">
+                                                All available agents are already on the team!
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )
+                    }
+
+                    {/* Pending Comments Guard Dialog */}
+                    <ConfirmationDialog
+                        {...dialogConfig}
+                        onClose={closeDialog}
+                    />
+                </div>
+            </div>
         </div>
     );
 };

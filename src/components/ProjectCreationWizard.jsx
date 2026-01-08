@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronRight, ChevronLeft, Save, Plus, ShieldCheck, Folder, Users } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Save, Plus, ShieldCheck, Folder, Users, Layout, Zap, FileText, Cloud, CheckCircle2 } from 'lucide-react';
+import { WORKFLOW_TEMPLATES } from '../config/workflowTemplates';
 
-const ProjectCreationWizard = ({ onProjectCreated }) => {
+const ProjectCreationWizard = ({ onProjectCreated, onCancel }) => {
     const [step, setStep] = useState(0);
     const [agents, setAgents] = useState([]);
     const [selectedAgents, setSelectedAgents] = useState([]);
     const [projectName, setProjectName] = useState('');
     const [projectCursorKey, setProjectCursorKey] = useState('');
     const [projectPath, setProjectPath] = useState('');
+    const [selectedWorkflow, setSelectedWorkflow] = useState(null);
     const [selections, setSelections] = useState({});
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
@@ -24,6 +26,7 @@ const ProjectCreationWizard = ({ onProjectCreated }) => {
     // Dynamic Wizard Steps Calculation
     const [wizardSteps, setWizardSteps] = useState([
         { id: 'project-details', type: 'static', title: 'Start' },
+        { id: 'workflow-selection', type: 'static', title: 'Workflow' },
         { id: 'team-selection', type: 'static', title: 'Team' },
         { id: 'summary', type: 'static', title: 'Review' }
     ]);
@@ -32,6 +35,7 @@ const ProjectCreationWizard = ({ onProjectCreated }) => {
     useEffect(() => {
         const baseSteps = [
             { id: 'project-details', type: 'static', title: 'Start' },
+            { id: 'workflow-selection', type: 'static', title: 'Workflow' },
             { id: 'team-selection', type: 'static', title: 'Team' }
         ];
 
@@ -54,9 +58,28 @@ const ProjectCreationWizard = ({ onProjectCreated }) => {
         ];
 
         setWizardSteps(finalSteps);
-    }, [selectedAgents, agents]);
+    }, [selectedAgents, agents, selectedWorkflow]);
+
+    const handleWorkflowSelect = (template) => {
+        setSelectedWorkflow(template);
+        if (template) {
+            // Pre-select agents
+            // We need to match agent IDs.
+            // If "Custom" (template is null), we might want to clear or keep?
+            // Let's assume selecting a template REPLACES current selection unless customized later.
+            setSelectedAgents(template.recommendedAgents);
+        } else {
+            // Custom - maybe keep clear?
+            setSelectedAgents([]);
+        }
+    };
 
     const handleAgentToggle = (agentId) => {
+        // Prevent deselecting required agents from the workflow
+        if (selectedWorkflow && selectedWorkflow.recommendedAgents.includes(agentId)) {
+            return;
+        }
+
         setSelectedAgents(prev =>
             prev.includes(agentId)
                 ? prev.filter(id => id !== agentId)
@@ -97,21 +120,34 @@ const ProjectCreationWizard = ({ onProjectCreated }) => {
     };
 
     const createProject = async () => {
-        const response = await fetch('http://localhost:3001/api/projects', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                name: projectName,
-                config: {
-                    agents: selectedAgents,
-                    selections: selections,
-                    cursorKey: projectCursorKey,
-                    projectPath: projectPath || undefined
-                }
-            })
-        });
-        if (response.ok) {
-            onProjectCreated();
+        try {
+            console.log('Creating project...', { projectName, selectedAgents, selections, selectedWorkflow });
+            const response = await fetch('http://localhost:3001/api/projects', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: projectName,
+                    config: {
+                        agents: selectedAgents,
+                        selections: selections,
+                        cursorKey: projectCursorKey,
+                        projectPath: projectPath || undefined,
+                        workflow: selectedWorkflow ? { phases: selectedWorkflow.phases } : undefined
+                    }
+                })
+            });
+
+            if (response.ok) {
+                console.log('Project created successfully');
+                onProjectCreated();
+            } else {
+                const errorText = await response.text();
+                console.error('Failed to create project:', response.status, errorText);
+                alert(`Failed to create project: ${response.status} ${errorText}`);
+            }
+        } catch (error) {
+            console.error('Error creating project:', error);
+            alert(`Error creating project: ${error.message}`);
         }
     };
 
@@ -120,7 +156,7 @@ const ProjectCreationWizard = ({ onProjectCreated }) => {
     const currentStepObj = wizardSteps[step] || wizardSteps[0];
 
     return (
-        <div className="w-full max-w-7xl mx-auto p-6 bg-white rounded-xl shadow-lg border border-gray-100 h-[800px] flex flex-col transition-all overflow-hidden">
+        <div className="w-full max-w-7xl mx-auto p-6 bg-white rounded-xl shadow-lg border border-gray-100 h-full max-h-[90vh] flex flex-col transition-all overflow-hidden">
             <div className="mb-6">
                 <div className="flex justify-between items-center mb-2">
                     <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">
@@ -137,10 +173,10 @@ const ProjectCreationWizard = ({ onProjectCreated }) => {
                 </div>
             </div>
 
-            {/* Main Content Area - Scroll handling moved to individual steps */}
+            {/* Main Content Area */}
             <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
                 {currentStepObj.id === 'project-details' && (
-                    <div className="h-full overflow-y-auto pr-2 custom-scrollbar">
+                    <div className="flex-1 min-h-0 w-full overflow-y-auto pr-2 custom-scrollbar">
                         <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-300">
                             <div className="bg-indigo-50 p-6 rounded-2xl border border-indigo-100">
                                 <h2 className="text-2xl font-bold text-slate-800 mb-2">Let's build something new</h2>
@@ -154,7 +190,7 @@ const ProjectCreationWizard = ({ onProjectCreated }) => {
                                         type="text"
                                         value={projectName}
                                         onChange={(e) => setProjectName(e.target.value)}
-                                        className="w-full px-4 py-4 border-2 border-slate-200 rounded-2xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all font-bold text-lg text-slate-800 placeholder:font-normal"
+                                        className="w-full px-4 py-4 border-2 border-slate-200 rounded-2xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all font-bold text-lg text-slate-800 placeholder:font-normal caret-indigo-600"
                                         placeholder="my-next-big-thing"
                                         autoFocus
                                     />
@@ -166,7 +202,7 @@ const ProjectCreationWizard = ({ onProjectCreated }) => {
                                         type="password"
                                         value={projectCursorKey}
                                         onChange={(e) => setProjectCursorKey(e.target.value)}
-                                        className="w-full px-4 py-4 border-2 border-slate-200 rounded-2xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all font-mono text-sm"
+                                        className="w-full px-4 py-4 border-2 border-slate-200 rounded-2xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all font-mono text-sm caret-indigo-600"
                                         placeholder="sk-..."
                                     />
                                 </div>
@@ -179,7 +215,7 @@ const ProjectCreationWizard = ({ onProjectCreated }) => {
                                         type="text"
                                         value={projectPath}
                                         onChange={(e) => setProjectPath(e.target.value)}
-                                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-2xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all font-mono text-xs text-slate-600"
+                                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-2xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all font-mono text-xs text-slate-600 caret-indigo-600"
                                         placeholder="/app/projects or host path"
                                     />
                                 </div>
@@ -188,13 +224,75 @@ const ProjectCreationWizard = ({ onProjectCreated }) => {
                     </div>
                 )}
 
+                {currentStepObj.id === 'workflow-selection' && (
+                    <div className="flex-1 min-h-0 w-full overflow-y-auto pr-2 custom-scrollbar">
+                        <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-300">
+                            <div className="text-center mb-8">
+                                <h2 className="text-2xl font-bold text-slate-800">Select a Workflow</h2>
+                                <p className="text-slate-500">Choose a development lifecycle template to pre-assemble your team.</p>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                {WORKFLOW_TEMPLATES.map(template => {
+                                    const isSelected = selectedWorkflow?.id === template.id;
+                                    return (
+                                        <div
+                                            key={template.id}
+                                            onClick={() => handleWorkflowSelect(template)}
+                                            className={`p-4 border-2 rounded-xl cursor-pointer transition-all hover:shadow-lg relative overflow-hidden group ${isSelected ? 'border-indigo-600 bg-indigo-50/30' : 'border-slate-100 bg-white hover:border-indigo-200'
+                                                }`}
+                                        >
+                                            <div className="flex items-center justify-between mb-3">
+                                                <div className="p-2 bg-white rounded-lg shadow-sm border border-slate-100">
+                                                    {template.icon === 'Zap' && <Zap className="w-5 h-5 text-amber-500" />}
+                                                    {template.icon === 'Layout' && <Layout className="w-5 h-5 text-indigo-500" />}
+                                                    {template.icon === 'FileText' && <FileText className="w-5 h-5 text-slate-500" />}
+                                                    {template.icon === 'Cloud' && <Cloud className="w-5 h-5 text-sky-500" />}
+                                                </div>
+                                                {isSelected && <div className="bg-indigo-600 text-white rounded-full p-0.5"><CheckCircle2 className="w-3.5 h-3.5" /></div>}
+                                            </div>
+                                            <h3 className="text-sm font-bold text-slate-800 mb-1">{template.name}</h3>
+                                            <p className="text-xs text-slate-500 leading-relaxed mb-3 line-clamp-2 h-8">{template.description}</p>
+
+                                            <div className="flex flex-wrap gap-1.5">
+                                                {template.recommendedAgents.slice(0, 3).map(a => (
+                                                    <span key={a} className="text-[9px] bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-500">{a}</span>
+                                                ))}
+                                                {template.recommendedAgents.length > 3 && (
+                                                    <span className="text-[9px] bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-500">+{template.recommendedAgents.length - 3}</span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+
+                                {/* Custom Option */}
+                                <div
+                                    onClick={() => handleWorkflowSelect(null)}
+                                    className={`p-4 border-2 rounded-xl cursor-pointer transition-all hover:shadow-lg relative overflow-hidden group ${selectedWorkflow === null ? 'border-indigo-600 bg-indigo-50/30' : 'border-slate-100 bg-white hover:border-indigo-200'
+                                        }`}
+                                >
+                                    <div className="flex items-center justify-between mb-3">
+                                        <div className="p-2 bg-white rounded-lg shadow-sm border border-slate-100">
+                                            <Users className="w-5 h-5 text-slate-400" />
+                                        </div>
+                                        {selectedWorkflow === null && <div className="bg-indigo-600 text-white rounded-full p-0.5"><CheckCircle2 className="w-3.5 h-3.5" /></div>}
+                                    </div>
+                                    <h3 className="text-sm font-bold text-slate-800 mb-1">Custom Team</h3>
+                                    <p className="text-xs text-slate-500 leading-relaxed mb-3 line-clamp-2">Start from scratch and hand-pick your agents one by one.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {currentStepObj.id === 'team-selection' && (
-                    <div className="h-full flex flex-col animate-in fade-in slide-in-from-right-4 duration-300">
+                    <div className="flex-1 min-h-0 w-full flex flex-col animate-in fade-in slide-in-from-right-4 duration-300">
                         {/* Fixed Header */}
                         <div className="flex-none flex items-end justify-between mb-6 pb-2 border-b border-transparent">
                             <div>
                                 <h2 className="text-2xl font-bold text-slate-800">Assemble Your Team</h2>
-                                <p className="text-slate-500 mt-1">Select the agents who will build this project.</p>
+                                <p className="text-slate-500 mt-1">Core workflow agents are pre-selected. Feel free to add more specialists to your team.</p>
                             </div>
                             <div className="relative">
                                 <input
@@ -209,7 +307,7 @@ const ProjectCreationWizard = ({ onProjectCreated }) => {
                         </div>
 
                         {/* Scrollable List */}
-                        <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+                        <div className="flex-1 min-h-0 overflow-y-auto pr-2 custom-scrollbar">
                             <div className="space-y-8 pb-4">
                                 {Object.keys(groupedAgents).length === 0 ? (
                                     <div className="text-center py-12 text-slate-400 italic">No agents found matching "{searchTerm}"</div>
@@ -220,33 +318,38 @@ const ProjectCreationWizard = ({ onProjectCreated }) => {
                                                 <span className="bg-slate-100 px-2 py-1 rounded">{category}</span>
                                                 <div className="h-px bg-slate-100 flex-1 ml-4"></div>
                                             </h4>
-                                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                                                {categoryAgents.map(a => (
-                                                    <div
-                                                        key={a.id}
-                                                        onClick={() => handleAgentToggle(a.id)}
-                                                        className={`p-5 border-2 rounded-2xl cursor-pointer transition-all duration-200 group relative ${selectedAgents.includes(a.id)
-                                                            ? 'border-indigo-600 bg-indigo-50/30'
-                                                            : 'border-slate-100 bg-white hover:border-slate-300 hover:shadow-md'
-                                                            }`}
-                                                    >
-                                                        <div className="flex items-start justify-between mb-2">
-                                                            <div className="flex items-center space-x-3">
-                                                                <div className="text-2xl">{a.icon}</div>
-                                                                <div>
-                                                                    <h3 className="font-bold text-slate-800 group-hover:text-indigo-700 transition-colors">{a.name}</h3>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                                {categoryAgents.map(a => {
+                                                    const isRequired = selectedWorkflow && selectedWorkflow.recommendedAgents.includes(a.id);
+                                                    const isSelected = selectedAgents.includes(a.id);
+
+                                                    return (
+                                                        <div
+                                                            key={a.id}
+                                                            onClick={() => handleAgentToggle(a.id)}
+                                                            className={`p-3 border-2 rounded-xl transition-all duration-200 group relative ${isSelected
+                                                                ? 'border-indigo-600 bg-indigo-50/30'
+                                                                : 'border-slate-100 bg-white hover:border-slate-300 hover:shadow-md cursor-pointer'
+                                                                } ${isRequired ? 'cursor-default' : 'cursor-pointer'}`}
+                                                        >
+                                                            <div className="flex items-center justify-between mb-1.5">
+                                                                <div className="flex items-center space-x-2">
+                                                                    <div className="text-lg">{a.icon}</div>
+                                                                    <div>
+                                                                        <h3 className="font-bold text-slate-800 text-sm group-hover:text-indigo-700 transition-colors">{a.name}</h3>
+                                                                    </div>
+                                                                </div>
+                                                                <div className={`w-4 h-4 rounded-full border flex items-center justify-center transition-all flex-shrink-0 ${isSelected
+                                                                    ? 'bg-indigo-600 border-indigo-600'
+                                                                    : 'border-slate-200 group-hover:border-slate-400'
+                                                                    }`}>
+                                                                    {isSelected && (isRequired ? <CheckCircle2 className="h-3 w-3 text-white" /> : <Plus className="h-3 w-3 text-white" />)}
                                                                 </div>
                                                             </div>
-                                                            <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${selectedAgents.includes(a.id)
-                                                                ? 'bg-indigo-600 border-indigo-600'
-                                                                : 'border-slate-200 group-hover:border-slate-400'
-                                                                }`}>
-                                                                {selectedAgents.includes(a.id) && <Plus className="h-4 w-4 text-white" />}
-                                                            </div>
+                                                            <p className="text-[10px] text-slate-500 leading-tight pl-[30px] line-clamp-2">{a.description}</p>
                                                         </div>
-                                                        <p className="text-xs text-slate-500 leading-relaxed pl-[44px]">{a.description}</p>
-                                                    </div>
-                                                ))}
+                                                    );
+                                                })}
                                             </div>
                                         </div>
                                     ))
@@ -257,7 +360,7 @@ const ProjectCreationWizard = ({ onProjectCreated }) => {
                 )}
 
                 {currentStepObj.type === 'agent-config' && (
-                    <div className="h-full overflow-y-auto pr-2 custom-scrollbar">
+                    <div className="flex-1 min-h-0 w-full overflow-y-auto pr-2 custom-scrollbar">
                         <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-300">
                             <div className="flex items-center space-x-4 mb-8">
                                 <div className="w-12 h-12 bg-indigo-100 rounded-2xl flex items-center justify-center text-3xl shadow-sm">
@@ -325,7 +428,7 @@ const ProjectCreationWizard = ({ onProjectCreated }) => {
                 )}
 
                 {currentStepObj.id === 'summary' && (
-                    <div className="h-full overflow-y-auto pr-2 custom-scrollbar">
+                    <div className="flex-1 min-h-0 w-full overflow-y-auto pr-2 custom-scrollbar">
                         <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
                             <div className="text-center mb-8">
                                 <h2 className="text-2xl font-bold text-slate-800">Ready to Launch?</h2>
@@ -343,6 +446,16 @@ const ProjectCreationWizard = ({ onProjectCreated }) => {
                                         <Folder className="h-6 w-6" />
                                     </div>
                                 </div>
+
+                                {selectedWorkflow && (
+                                    <div className="border-b border-indigo-50 pb-6">
+                                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Selected Workflow</span>
+                                        <div className="flex items-center space-x-2 mt-2">
+                                            <span className="font-bold text-slate-800">{selectedWorkflow.name}</span>
+                                            <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded text-xs font-bold">{selectedWorkflow.phases.length} Phases</span>
+                                        </div>
+                                    </div>
+                                )}
 
                                 <div>
                                     <span className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 block">The Team</span>
@@ -373,13 +486,21 @@ const ProjectCreationWizard = ({ onProjectCreated }) => {
             </div>
 
             <div className="mt-8 pt-6 border-t border-slate-100 flex justify-between items-center">
-                <button
-                    onClick={() => setStep(s => Math.max(0, s - 1))}
-                    className={`flex items-center px-5 py-2.5 rounded-xl font-bold text-sm transition-all ${step === 0 ? 'invisible' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
-                        }`}
-                >
-                    <ChevronLeft className="mr-2 h-4 w-4" /> Back
-                </button>
+                <div className="flex items-center space-x-2">
+                    <button
+                        onClick={onCancel}
+                        className="text-slate-400 hover:text-red-500 font-bold text-sm px-4 py-2 hover:bg-red-50 rounded-xl transition-all"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        onClick={() => setStep(s => Math.max(0, s - 1))}
+                        className={`flex items-center px-5 py-2.5 rounded-xl font-bold text-sm transition-all ${step === 0 ? 'invisible' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+                            }`}
+                    >
+                        <ChevronLeft className="mr-2 h-4 w-4" /> Back
+                    </button>
+                </div>
 
                 {step === wizardSteps.length - 1 ? (
                     <button

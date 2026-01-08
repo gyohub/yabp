@@ -110,7 +110,18 @@ app.get('/api/agents', async (req, res) => {
 });
 
 const interpolatePrompt = (template, variables) => {
-    return template.replace(/\{\{(\w+)\}\}/g, (_, key) => variables[key] || `{{${key}}}`);
+    return template.replace(/\{\{([\w\.]+)\}\}/g, (_, key) => {
+        const keys = key.split('.');
+        let value = variables;
+        for (const k of keys) {
+            value = value ? value[k] : undefined;
+        }
+
+        // Handle array/object stringification if needed, or return original placeholder if undefined
+        if (value === undefined) return `{{${key}}}`;
+        if (typeof value === 'object') return JSON.stringify(value, null, 2);
+        return value;
+    });
 };
 
 // List projects
@@ -288,6 +299,53 @@ app.patch('/api/projects/:name/config', async (req, res) => {
     }
 });
 
+// Context Store Endpoints (Phase 50)
+// Get Project Context
+app.get('/api/projects/:name/context', async (req, res) => {
+    try {
+        const { name } = req.params;
+        const projectDir = await resolveProjectPath(name);
+        if (!await fs.pathExists(projectDir)) {
+            return res.status(404).json({ error: 'Project not found' });
+        }
+
+        const contextPath = path.join(projectDir, '.yabp', 'context.json');
+        if (await fs.pathExists(contextPath)) {
+            const context = await fs.readJson(contextPath);
+            res.json(context);
+        } else {
+            res.json({}); // Return empty context if not initialized
+        }
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Update Project Context
+app.patch('/api/projects/:name/context', async (req, res) => {
+    try {
+        const { name } = req.params;
+        const updates = req.body;
+        const projectDir = await resolveProjectPath(name);
+        const contextPath = path.join(projectDir, '.yabp', 'context.json');
+
+        await fs.ensureDir(path.dirname(contextPath));
+
+        let currentContext = {};
+        if (await fs.pathExists(contextPath)) {
+            currentContext = await fs.readJson(contextPath);
+        }
+
+        // Deep merge or top-level merge? Top-level is simpler and safer for now.
+        const newContext = { ...currentContext, ...updates };
+
+        await fs.writeJson(contextPath, newContext, { spaces: 2 });
+        res.json({ success: true, context: newContext });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Get structured prompts from prompts.md
 app.get('/api/projects/:name/prompts', async (req, res) => {
     try {
@@ -343,7 +401,14 @@ app.get('/api/projects/:name/files', async (req, res) => {
             const result = [];
             for (const item of items) {
                 const itemRelPath = path.join(relativePath, item.name);
-                if (item.name === '.yabp') continue;
+
+                // Noise Filtering (Phase 57)
+                if (
+                    item.name === '.yabp' ||
+                    item.name === 'node_modules' ||
+                    item.name === '.git' ||
+                    item.name === '.DS_Store'
+                ) continue;
 
                 if (item.isDirectory()) {
                     result.push({
@@ -472,8 +537,21 @@ app.post('/api/projects/:name/run-prompt', async (req, res) => {
             }
         } catch (e) { }
 
+        // Load shared context (Phase 50)
+        let context = {};
+        try {
+            const contextPath = path.join(projectDir, '.yabp', 'context.json');
+            if (await fs.pathExists(contextPath)) {
+                context = await fs.readJson(contextPath);
+            }
+        } catch (e) { }
+
         // Interpolate
-        let interpolatedPrompt = interpolatePrompt(prompt, { ...config, name });
+        // Merge strict Config + shared Context. 
+        // We nest context under 'context' key, but also spread it for flattened access if desired, 
+        // though flattened access might conflict with config keys.
+        // Strategy: {{context.key}} is safer.
+        let interpolatedPrompt = interpolatePrompt(prompt, { ...config, context, name });
 
         // GLOBAL ASSERTIVE ENFORCEMENT (Phase 26)
         // This is prepended to EVERYTHING to ensure compliance.
