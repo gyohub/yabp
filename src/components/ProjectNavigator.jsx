@@ -1505,6 +1505,7 @@ const ProjectNavigator = ({ onBack }) => {
 
                                     <div className="flex-1 overflow-y-auto p-6 space-y-3 custom-scrollbar">
                                         {allAgents
+                                            .filter(a => a.active !== false)
                                             .filter(a => !(projectConfig?.agents || []).includes(a.id))
                                             .map(agent => (
                                                 <div key={agent.id} className="p-4 bg-slate-50 border border-slate-100 rounded-2xl flex justify-between items-center hover:bg-indigo-50 hover:border-indigo-100 transition-all group">

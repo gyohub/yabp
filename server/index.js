@@ -109,6 +109,162 @@ app.get('/api/agents', async (req, res) => {
     }
 });
 
+// Create new agent (Phase 58)
+app.post('/api/agents', async (req, res) => {
+    try {
+        const { name, icon, role, category } = req.body;
+        const id = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+        const agentPath = path.join(AGENTS_DIR, id);
+
+        if (await fs.pathExists(agentPath)) {
+            return res.status(400).json({ error: 'Agent with this name already exists' });
+        }
+
+        await fs.ensureDir(agentPath);
+        await fs.ensureDir(path.join(agentPath, 'prompts'));
+
+        const metadata = {
+            name,
+            role: role || '',
+            category: category || 'General',
+            icon: icon || '🤖',
+            description: '',
+            active: true,
+            prompts: []
+        };
+
+        await fs.writeFile(path.join(agentPath, 'metadata.yaml'), yaml.dump(metadata));
+        res.json({ id, ...metadata });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Update agent metadata (Phase 58)
+app.put('/api/agents/:id/metadata', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const metadataPath = path.join(AGENTS_DIR, id, 'metadata.yaml');
+
+        if (!(await fs.pathExists(metadataPath))) {
+            return res.status(404).json({ error: 'Agent not found' });
+        }
+
+        const currentContent = await fs.readFile(metadataPath, 'utf8');
+        const currentMetadata = yaml.load(currentContent);
+
+        const updatedMetadata = { ...currentMetadata, ...req.body };
+        await fs.writeFile(metadataPath, yaml.dump(updatedMetadata));
+
+        res.json(updatedMetadata);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// List prompts for an agent (Phase 58)
+app.get('/api/agents/:id/prompts', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const promptsDir = path.join(AGENTS_DIR, id, 'prompts');
+
+        if (!(await fs.pathExists(promptsDir))) {
+            return res.json([]);
+        }
+
+        const files = await fs.readdir(promptsDir);
+        const prompts = files.filter(f => f.endsWith('.md')).map(f => ({
+            filename: f,
+            id: path.basename(f, '.md')
+        }));
+
+        res.json(prompts);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get specific prompt content (Phase 58)
+app.get('/api/agents/:id/prompts/:filename', async (req, res) => {
+    try {
+        const { id, filename } = req.params;
+        const filePath = path.join(AGENTS_DIR, id, 'prompts', filename);
+
+        if (!(await fs.pathExists(filePath))) {
+            return res.status(404).json({ error: 'Prompt not found' });
+        }
+
+        const content = await fs.readFile(filePath, 'utf8');
+        res.json({ content });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Save/Update prompt (Phase 58)
+app.put('/api/agents/:id/prompts/:filename', async (req, res) => {
+    try {
+        const { id, filename } = req.params;
+        const { content } = req.body;
+        const promptDir = path.join(AGENTS_DIR, id, 'prompts');
+        await fs.ensureDir(promptDir);
+
+        const filePath = path.join(promptDir, filename);
+        await fs.writeFile(filePath, content);
+
+        // Update metadata prompts list if not present
+        const metadataPath = path.join(AGENTS_DIR, id, 'metadata.yaml');
+        if (await fs.pathExists(metadataPath)) {
+            const mContent = await fs.readFile(metadataPath, 'utf8');
+            const metadata = yaml.load(mContent);
+            const promptId = path.basename(filename, '.md');
+
+            if (!metadata.prompts) metadata.prompts = [];
+            if (!metadata.prompts.find(p => p.id === promptId)) {
+                metadata.prompts.push({
+                    id: promptId,
+                    title: promptId.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
+                    executable: true
+                });
+                await fs.writeFile(metadataPath, yaml.dump(metadata));
+            }
+        }
+
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Delete prompt (Phase 58)
+app.delete('/api/agents/:id/prompts/:filename', async (req, res) => {
+    try {
+        const { id, filename } = req.params;
+        const filePath = path.join(AGENTS_DIR, id, 'prompts', filename);
+
+        if (await fs.pathExists(filePath)) {
+            await fs.remove(filePath);
+        }
+
+        // Remove from metadata prompts list
+        const metadataPath = path.join(AGENTS_DIR, id, 'metadata.yaml');
+        if (await fs.pathExists(metadataPath)) {
+            const mContent = await fs.readFile(metadataPath, 'utf8');
+            const metadata = yaml.load(mContent);
+            const promptId = path.basename(filename, '.md');
+
+            if (metadata.prompts) {
+                metadata.prompts = metadata.prompts.filter(p => p.id !== promptId);
+                await fs.writeFile(metadataPath, yaml.dump(metadata));
+            }
+        }
+
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 const interpolatePrompt = (template, variables) => {
     return template.replace(/\{\{([\w\.]+)\}\}/g, (_, key) => {
         const keys = key.split('.');

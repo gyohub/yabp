@@ -1,7 +1,7 @@
 import React from 'react';
-import { Rocket, Settings, PackagePlus, Plus, Layout } from 'lucide-react';
+import { Rocket, Settings, PackagePlus, Plus, Layout, Cpu } from 'lucide-react';
 
-const AppHeader = ({ onOpenSettings, onOpenInstaller, onNewProject, onOpenWorkflows, showNewProjectBtn = true }) => {
+const AppHeader = ({ onOpenSettings, onOpenInstaller, onNewProject, onOpenWorkflows, onOpenAgentStudio, showNewProjectBtn = true }) => {
     return (
         <nav className="fixed top-0 w-full bg-white/80 backdrop-blur-md border-b border-gray-100 z-50 h-16">
             <div className="w-full px-6 h-full flex items-center justify-between">
@@ -27,6 +27,15 @@ const AppHeader = ({ onOpenSettings, onOpenInstaller, onNewProject, onOpenWorkfl
                             title="Workflow Templates"
                         >
                             <Layout className="h-5 w-5" />
+                        </button>
+                    )}
+                    {onOpenAgentStudio && (
+                        <button
+                            onClick={onOpenAgentStudio}
+                            className="p-2 text-slate-400 hover:text-indigo-600 transition-colors"
+                            title="Agent Studio"
+                        >
+                            <Cpu className="h-5 w-5" />
                         </button>
                     )}
                     {onOpenInstaller && (

@@ -90,10 +90,12 @@ const ProjectCreationWizard = ({ onProjectCreated, onCancel }) => {
     const activeAgents = agents.filter(a => selectedAgents.includes(a.id));
 
     // Agent Filtering & Grouping
-    const filteredAgents = agents.filter(agent =>
-        agent.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (agent.description && agent.description.toLowerCase().includes(searchTerm.toLowerCase()))
-    );
+    const filteredAgents = agents
+        .filter(a => a.active !== false)
+        .filter(agent =>
+            agent.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (agent.description && agent.description.toLowerCase().includes(searchTerm.toLowerCase()))
+        );
 
     const groupedAgents = filteredAgents.reduce((acc, agent) => {
         const category = agent.category || 'Uncategorized';
