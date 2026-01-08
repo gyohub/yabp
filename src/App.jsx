@@ -6,6 +6,7 @@ import ProjectNavigator from './components/ProjectNavigator';
 import AgentInstaller from './components/AgentInstaller';
 import SettingsView from './components/SettingsView';
 import AppHeader from './components/AppHeader';
+import ConfirmationDialog from './components/ConfirmationDialog';
 
 function App() {
   const navigate = useNavigate();
@@ -31,19 +32,39 @@ function App() {
     fetchProjects();
   }, []);
 
+  /* Dialog State */
+  const [dialogConfig, setDialogConfig] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'info',
+    onConfirm: null
+  });
+
+  const closeDialog = () => setDialogConfig(prev => ({ ...prev, isOpen: false }));
+
   const handleProjectCreated = () => {
     navigate('/');
     fetchProjects();
   };
 
-  const deleteProject = async (e, name) => {
+  const deleteProjectRequest = (e, name) => {
     e.stopPropagation();
-    if (window.confirm(`Are you sure you want to delete project "${name}"?`)) {
-      try {
-        const res = await fetch(`http://localhost:3001/api/projects/${encodeURIComponent(name)}`, { method: 'DELETE' });
-        if (res.ok) fetchProjects();
-      } catch (e) { console.error(e); }
-    }
+    setDialogConfig({
+      isOpen: true,
+      title: 'Delete Project',
+      message: `Are you sure you want to delete project "${name}"? This action cannot be undone.`,
+      type: 'danger',
+      confirmText: 'Delete Project',
+      onConfirm: () => performDeleteProject(name)
+    });
+  };
+
+  const performDeleteProject = async (name) => {
+    try {
+      const res = await fetch(`http://localhost:3001/api/projects/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      if (res.ok) fetchProjects();
+    } catch (e) { console.error(e); }
   };
 
   return (
@@ -130,7 +151,7 @@ function App() {
                           <div className="h-8 w-8 rounded-full border-2 border-white bg-violet-100 flex items-center justify-center text-[10px] font-bold text-violet-600">YML</div>
                         </div>
                         <button
-                          onClick={e => deleteProject(e, p.name)}
+                          onClick={e => deleteProjectRequest(e, p.name)}
                           className="text-slate-400 hover:text-red-500 transition-colors p-2 hover:bg-red-50 rounded-xl"
                         >
                           <Trash2 className="h-5 w-5" />
@@ -168,7 +189,17 @@ function App() {
           </>
         } />
       </Routes>
-    </div>
+
+      <ConfirmationDialog
+        isOpen={dialogConfig.isOpen}
+        onClose={closeDialog}
+        onConfirm={dialogConfig.onConfirm}
+        title={dialogConfig.title}
+        message={dialogConfig.message}
+        type={dialogConfig.type}
+        confirmText={dialogConfig.confirmText}
+      />
+    </div >
   );
 }
 

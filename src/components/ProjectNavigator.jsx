@@ -12,8 +12,9 @@ import {
 import AppHeader from './AppHeader';
 import WorkflowOrchestrator from './WorkflowOrchestrator';
 import MermaidRenderer from './MermaidRenderer';
+import ConfirmationDialog from './ConfirmationDialog';
 
-const FileTree = ({ items, onFileSelect, onExecuteFile, onDeleteFile, level = 0 }) => {
+const FileTree = ({ items, onFileSelect, onExecuteFile, onDeleteFile, selectedFile, level = 0 }) => {
     const [expanded, setExpanded] = useState({});
     const toggle = (path) => setExpanded(prev => ({ ...prev, [path]: !prev[path] }));
 
@@ -22,7 +23,10 @@ const FileTree = ({ items, onFileSelect, onExecuteFile, onDeleteFile, level = 0 
             {items.map(item => (
                 <div key={item.path}>
                     <div
-                        className={`group flex items-center py-1.5 px-3 hover:bg-slate-100 cursor-pointer rounded-xl transition-all text-sm ${item.type === 'file' ? 'text-slate-600' : 'font-bold text-slate-900'}`}
+                        className={`group flex items-center py-1.5 px-3 hover:bg-slate-100 cursor-pointer rounded-xl transition-all text-sm ${item.path === selectedFile
+                            ? 'bg-indigo-50 text-indigo-600 font-bold ring-1 ring-indigo-500/10'
+                            : item.type === 'file' ? 'text-slate-600' : 'font-bold text-slate-900'
+                            }`}
                         style={{ paddingLeft: `${level * 16 + 12}px` }}
                         onClick={() => item.type === 'directory' ? toggle(item.path) : onFileSelect(item.path)}
                     >
@@ -55,7 +59,7 @@ const FileTree = ({ items, onFileSelect, onExecuteFile, onDeleteFile, level = 0 
                         )}
                     </div>
                     {item.type === 'directory' && expanded[item.path] && (
-                        <FileTree items={item.children} onFileSelect={onFileSelect} onExecuteFile={onExecuteFile} onDeleteFile={onDeleteFile} level={level + 1} />
+                        <FileTree items={item.children} onFileSelect={onFileSelect} onExecuteFile={onExecuteFile} onDeleteFile={onDeleteFile} selectedFile={selectedFile} level={level + 1} />
                     )}
                 </div>
             ))}
@@ -99,6 +103,31 @@ const ProjectNavigator = ({ onBack }) => {
     // Navigation History (Phase 23)
     const [history, setHistory] = useState([]);
     const [historyIndex, setHistoryIndex] = useState(-1);
+
+    // Dialog State
+    const [dialogConfig, setDialogConfig] = useState({
+        isOpen: false,
+        title: '',
+        message: '',
+        type: 'info',
+        isAlert: false,
+        onConfirm: null
+    });
+
+    // Helper to close dialog
+    const closeDialog = () => setDialogConfig(prev => ({ ...prev, isOpen: false }));
+
+    // Helper to show alert
+    const showAlert = (title, message, type = 'danger') => {
+        setDialogConfig({
+            isOpen: true,
+            title,
+            message,
+            type,
+            isAlert: true,
+            onConfirm: null
+        });
+    };
 
     useEffect(() => {
         if (selectedFile && history[historyIndex] !== selectedFile) {
@@ -239,8 +268,18 @@ const ProjectNavigator = ({ onBack }) => {
         saveCommentsToBackend(updated);
     };
 
-    const handleDeleteFile = async (filePath) => {
-        if (!confirm(`Are you sure you want to delete ${filePath}? It will be moved to .deleted folder.`)) return;
+    const handleDeleteFileRequest = (filePath) => {
+        setDialogConfig({
+            isOpen: true,
+            title: 'Delete File',
+            message: `Are you sure you want to delete ${filePath}? It will be moved to .deleted folder.`,
+            type: 'danger',
+            confirmText: 'Delete',
+            onConfirm: () => performDeleteFile(filePath)
+        });
+    };
+
+    const performDeleteFile = async (filePath) => {
 
         try {
             const res = await fetch(`http://localhost:3001/api/projects/${encodeURIComponent(projectName)}/file?path=${encodeURIComponent(filePath)}`, {
@@ -255,11 +294,11 @@ const ProjectNavigator = ({ onBack }) => {
                     setFileContent('');
                 }
             } else {
-                alert(`Error deleting file: ${data.error}`);
+                showAlert('Error', `Error deleting file: ${data.error}`);
             }
         } catch (e) {
             console.error(e);
-            alert('Failed to delete file');
+            showAlert('Error', 'Failed to delete file');
         }
     };
 
@@ -407,6 +446,28 @@ const ProjectNavigator = ({ onBack }) => {
     const handleOpenAgentModal = (agent, initialPrompt = '') => {
         setSelectedAgentForModal(agent);
         setAgentPrompt(initialPrompt);
+    };
+
+    // Phase 47: Task Guard
+    const handleAssignTaskRequest = () => {
+        const fileComments = comments[selectedFile] || [];
+        const pendingComments = fileComments.filter(c => !c.processed && c.status === 'open');
+
+        if (pendingComments.length > 0) {
+            setDialogConfig({
+                isOpen: true,
+                title: 'Pending Comments detected',
+                message: `There are ${pendingComments.length} pending comments for this file. Are you sure you want to proceed without addressing them?`,
+                type: 'warning',
+                confirmText: 'Yes, Proceed',
+                onConfirm: () => {
+                    closeDialog();
+                    runAgentSpecificPrompt();
+                }
+            });
+        } else {
+            runAgentSpecificPrompt();
+        }
     };
 
     const runAgentSpecificPrompt = async () => {
@@ -664,7 +725,7 @@ const ProjectNavigator = ({ onBack }) => {
                             ) : (
                                 <div className="flex flex-col h-full">
                                     <div className="flex-1 overflow-y-auto">
-                                        <FileTree items={files} onFileSelect={handleFileSelect} onExecuteFile={handleExecuteFile} onDeleteFile={handleDeleteFile} />
+                                        <FileTree items={files} onFileSelect={handleFileSelect} onExecuteFile={handleExecuteFile} onDeleteFile={handleDeleteFileRequest} selectedFile={selectedFile} />
                                     </div>
                                     <button
                                         onClick={loadFiles}
@@ -852,159 +913,162 @@ const ProjectNavigator = ({ onBack }) => {
                         </div>
                     ) : selectedFile ? (
                         <div className="flex-1 flex flex-col overflow-hidden">
-                            <div className="px-8 py-5 border-b border-slate-100 flex items-center justify-between bg-white/80 backdrop-blur-md sticky top-0 z-10">
-                                <div className="flex items-center space-x-3 min-w-0">
-                                    {/* Navigation History Controls */}
-                                    <div className="flex items-center space-x-0.5 mr-1 bg-slate-50 rounded-lg p-0.5 border border-slate-100">
-                                        <button
-                                            onClick={handleBack}
-                                            disabled={historyIndex <= 0}
-                                            className={`p-1.5 rounded-md transition-all ${historyIndex > 0 ? 'text-slate-600 hover:bg-white hover:shadow-sm hover:text-indigo-600' : 'text-slate-300 cursor-not-allowed'}`}
-                                            title="Go Back"
-                                        >
-                                            <ArrowLeft className="h-3.5 w-3.5" />
-                                        </button>
-                                        <button
-                                            onClick={handleForward}
-                                            disabled={historyIndex >= history.length - 1}
-                                            className={`p-1.5 rounded-md transition-all ${historyIndex < history.length - 1 ? 'text-slate-600 hover:bg-white hover:shadow-sm hover:text-indigo-600' : 'text-slate-300 cursor-not-allowed'}`}
-                                            title="Go Forward"
-                                        >
-                                            <ArrowRight className="h-3.5 w-3.5" />
-                                        </button>
-                                    </div>
-                                    <div className="bg-slate-100 p-2 rounded-xl">
-                                        {selectedFile.endsWith('.md') ? <FileText className="h-4 w-4 text-blue-500" /> : <FileCode className="h-4 w-4 text-green-500" />}
-                                    </div>
-                                    <div className="min-w-0">
-                                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none mb-1">Source Path {currentFileItem?.executable ? '🔥 Executable' : ''}</div>
-                                        <div className="text-sm font-bold text-slate-800 truncate">projects / {projectName} / {selectedFile}</div>
-                                    </div>
-                                    {selectedFile.endsWith('.md') && !isEditing && (
-                                        <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-lg ml-4">
+                            <div className="px-8 py-3 border-b border-slate-100 flex flex-col bg-white/80 backdrop-blur-md sticky top-0 z-10">
+                                <div className="flex items-center justify-between w-full">
+                                    <div className="flex items-center space-x-3 min-w-0">
+                                        {/* Navigation History Controls */}
+                                        <div className="flex items-center space-x-0.5 mr-1 bg-slate-50 rounded-lg p-0.5 border border-slate-100">
                                             <button
-                                                onClick={() => setShowMdSource(false)}
-                                                className={`px-3 py-1.5 rounded-md text-[10px] font-bold transition-all flex items-center ${!showMdSource ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                                                onClick={handleBack}
+                                                disabled={historyIndex <= 0}
+                                                className={`p-1.5 rounded-md transition-all ${historyIndex > 0 ? 'text-slate-600 hover:bg-white hover:shadow-sm hover:text-indigo-600' : 'text-slate-300 cursor-not-allowed'}`}
+                                                title="Go Back"
                                             >
-                                                <Eye className="h-3 w-3 mr-1.5" /> Preview
+                                                <ArrowLeft className="h-3.5 w-3.5" />
                                             </button>
                                             <button
-                                                className={`px-3 py-1.5 rounded-md text-[10px] font-bold transition-all flex items-center ${showMdSource ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                                                onClick={() => setShowMdSource(true)}
+                                                onClick={handleForward}
+                                                disabled={historyIndex >= history.length - 1}
+                                                className={`p-1.5 rounded-md transition-all ${historyIndex < history.length - 1 ? 'text-slate-600 hover:bg-white hover:shadow-sm hover:text-indigo-600' : 'text-slate-300 cursor-not-allowed'}`}
+                                                title="Go Forward"
                                             >
-                                                <Code className="h-3 w-3 mr-1.5" /> Source
+                                                <ArrowRight className="h-3.5 w-3.5" />
                                             </button>
                                         </div>
-                                    )}
-                                </div>
-                                <div className="flex items-center space-x-2">
-                                    {/* Process With Agent Dropdown */}
-                                    <div className="relative">
-                                        <button
-                                            onClick={() => setIsProcessMenuOpen(!isProcessMenuOpen)}
-                                            className="bg-indigo-50 text-indigo-600 px-4 py-2 h-9 justify-center rounded-xl text-xs font-bold shadow-sm hover:bg-indigo-100 transition-all flex items-center active:scale-95"
-                                        >
-                                            <Sparkles className="h-3.5 w-3.5 mr-2" />
-                                            Process with...
-                                        </button>
+                                        <div className="bg-slate-100 p-2 rounded-xl">
+                                            {selectedFile.endsWith('.md') ? <FileText className="h-4 w-4 text-blue-500" /> : <FileCode className="h-4 w-4 text-green-500" />}
+                                        </div>
 
-                                        {isProcessMenuOpen && (
-                                            <>
-                                                <div className="fixed inset-0 z-20" onClick={() => setIsProcessMenuOpen(false)}></div>
-                                                <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-xl shadow-xl border border-slate-100 z-30 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
-                                                    <div className="max-h-[300px] overflow-y-auto custom-scrollbar">
-                                                        {(() => {
-                                                            const projectAgents = allAgents.filter(a => (projectConfig?.agents || []).includes(a.id));
-                                                            const recommended = getRecommendedAgents(selectedFile, projectAgents);
-                                                            const otherAgents = projectAgents.filter(a => !recommended.find(r => r.id === a.id));
+                                        {selectedFile.endsWith('.md') && !isEditing && (
+                                            <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-lg ml-4">
+                                                <button
+                                                    onClick={() => setShowMdSource(false)}
+                                                    className={`px-3 py-1.5 rounded-md text-[10px] font-bold transition-all flex items-center ${!showMdSource ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                                                >
+                                                    <Eye className="h-3 w-3 mr-1.5" /> Preview
+                                                </button>
+                                                <button
+                                                    className={`px-3 py-1.5 rounded-md text-[10px] font-bold transition-all flex items-center ${showMdSource ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                                                    onClick={() => setShowMdSource(true)}
+                                                >
+                                                    <Code className="h-3 w-3 mr-1.5" /> Source
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center space-x-2">
+                                        {/* Process With Agent Dropdown */}
+                                        <div className="relative">
+                                            <button
+                                                onClick={() => setIsProcessMenuOpen(!isProcessMenuOpen)}
+                                                className="bg-indigo-50 text-indigo-600 px-4 py-2 h-9 justify-center rounded-xl text-xs font-bold shadow-sm hover:bg-indigo-100 transition-all flex items-center active:scale-95"
+                                            >
+                                                <Sparkles className="h-3.5 w-3.5 mr-2" />
+                                                Process with...
+                                            </button>
 
-                                                            return (
-                                                                <>
-                                                                    {recommended.length > 0 && (
-                                                                        <div className="p-2 border-b border-slate-50 bg-indigo-50/30">
-                                                                            <div className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest px-2 py-1">Recommended</div>
-                                                                            {recommended.map(agent => (
+                                            {isProcessMenuOpen && (
+                                                <>
+                                                    <div className="fixed inset-0 z-20" onClick={() => setIsProcessMenuOpen(false)}></div>
+                                                    <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-xl shadow-xl border border-slate-100 z-30 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+                                                        <div className="max-h-[300px] overflow-y-auto custom-scrollbar">
+                                                            {(() => {
+                                                                const projectAgents = allAgents.filter(a => (projectConfig?.agents || []).includes(a.id));
+                                                                const recommended = getRecommendedAgents(selectedFile, projectAgents);
+                                                                const otherAgents = projectAgents.filter(a => !recommended.find(r => r.id === a.id));
+
+                                                                return (
+                                                                    <>
+                                                                        {recommended.length > 0 && (
+                                                                            <div className="p-2 border-b border-slate-50 bg-indigo-50/30">
+                                                                                <div className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest px-2 py-1">Recommended</div>
+                                                                                {recommended.map(agent => (
+                                                                                    <button
+                                                                                        key={agent.id}
+                                                                                        onClick={() => handleProcessWithAgent(agent)}
+                                                                                        className="w-full text-left px-3 py-2 flex items-center space-x-2 hover:bg-white rounded-lg transition-colors group"
+                                                                                    >
+                                                                                        <div className="text-lg">{agent.icon}</div>
+                                                                                        <div className="flex-1">
+                                                                                            <div className="text-xs font-bold text-slate-700 group-hover:text-indigo-600">{agent.name}</div>
+                                                                                            <div className="text-[9px] text-slate-400">{agent.role || agent.category}</div>
+                                                                                        </div>
+                                                                                    </button>
+                                                                                ))}
+                                                                            </div>
+                                                                        )}
+
+                                                                        <div className="p-2">
+                                                                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-2 py-1">Team Members</div>
+                                                                            {otherAgents.map(agent => (
                                                                                 <button
                                                                                     key={agent.id}
                                                                                     onClick={() => handleProcessWithAgent(agent)}
-                                                                                    className="w-full text-left px-3 py-2 flex items-center space-x-2 hover:bg-white rounded-lg transition-colors group"
+                                                                                    className="w-full text-left px-3 py-2 flex items-center space-x-2 hover:bg-slate-50 rounded-lg transition-colors group"
                                                                                 >
-                                                                                    <div className="text-lg">{agent.icon}</div>
+                                                                                    <div className="text-lg opacity-60 group-hover:opacity-100">{agent.icon}</div>
                                                                                     <div className="flex-1">
-                                                                                        <div className="text-xs font-bold text-slate-700 group-hover:text-indigo-600">{agent.name}</div>
-                                                                                        <div className="text-[9px] text-slate-400">{agent.role || agent.category}</div>
+                                                                                        <div className="text-xs font-bold text-slate-600 group-hover:text-slate-900">{agent.name}</div>
                                                                                     </div>
                                                                                 </button>
                                                                             ))}
                                                                         </div>
-                                                                    )}
-
-                                                                    <div className="p-2">
-                                                                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-2 py-1">Team Members</div>
-                                                                        {otherAgents.map(agent => (
-                                                                            <button
-                                                                                key={agent.id}
-                                                                                onClick={() => handleProcessWithAgent(agent)}
-                                                                                className="w-full text-left px-3 py-2 flex items-center space-x-2 hover:bg-slate-50 rounded-lg transition-colors group"
-                                                                            >
-                                                                                <div className="text-lg opacity-60 group-hover:opacity-100">{agent.icon}</div>
-                                                                                <div className="flex-1">
-                                                                                    <div className="text-xs font-bold text-slate-600 group-hover:text-slate-900">{agent.name}</div>
-                                                                                </div>
-                                                                            </button>
-                                                                        ))}
-                                                                    </div>
-                                                                </>
-                                                            );
-                                                        })()}
+                                                                    </>
+                                                                );
+                                                            })()}
+                                                        </div>
                                                     </div>
-                                                </div>
-                                            </>
-                                        )}
-                                    </div>
+                                                </>
+                                            )}
+                                        </div>
 
-                                    {currentFileItem?.executable && !isEditing && (
-                                        <button
-                                            onClick={() => handleExecuteFile(selectedFile)}
-                                            disabled={executing}
-                                            className="bg-green-600 text-white px-4 py-2 h-9 justify-center rounded-xl text-xs font-bold shadow-sm hover:bg-green-700 transition-all flex items-center active:scale-95 disabled:opacity-50"
-                                        >
-                                            <Play className="h-3.5 w-3.5 mr-2 fill-white" /> Execute Prompt
-                                        </button>
-                                    )}
-                                    {isEditing ? (
-                                        <button
-                                            onClick={handleSaveFile}
-                                            disabled={saving}
-                                            className="bg-indigo-600 text-white px-4 py-2 h-9 justify-center rounded-xl text-xs font-bold shadow-sm hover:bg-indigo-700 transition-all flex items-center active:scale-95 disabled:opacity-50"
-                                        >
-                                            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" /> : <Save className="h-3.5 w-3.5 mr-2" />}
-                                            Save Changes
-                                        </button>
-                                    ) : (
-                                        <button
-                                            onClick={() => setIsEditing(true)}
-                                            className="bg-indigo-600 text-white px-4 py-2 h-9 justify-center rounded-xl text-xs font-bold shadow-sm hover:bg-indigo-700 transition-all flex items-center active:scale-95"
-                                        >
-                                            <Edit3 className="h-3.5 w-3.5 mr-2" /> Edit File
-                                        </button>
-                                    )}
-                                    <button
-                                        onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
-                                        className={`px-4 py-2 h-9 justify-center rounded-xl text-xs font-bold transition-all flex items-center shadow-sm ${isRightPanelOpen ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 hover:text-indigo-600'}`}
-                                        title="Toggle Code Comments"
-                                    >
-                                        <MessageSquare className="h-3.5 w-3.5 mr-2" />
-                                        {(comments[selectedFile] || []).filter(c => !c.processed).length > 0 && (
-                                            <span className="bg-red-500 text-white text-[9px] px-1.5 py-0.5 rounded-full mr-2">
-                                                {(comments[selectedFile] || []).filter(c => !c.processed).length}
-                                            </span>
+                                        {currentFileItem?.executable && !isEditing && (
+                                            <button
+                                                onClick={() => handleExecuteFile(selectedFile)}
+                                                disabled={executing}
+                                                className="bg-green-600 text-white px-4 py-2 h-9 justify-center rounded-xl text-xs font-bold shadow-sm hover:bg-green-700 transition-all flex items-center active:scale-95 disabled:opacity-50"
+                                            >
+                                                <Play className="h-3.5 w-3.5 mr-2 fill-white" /> Execute Prompt
+                                            </button>
                                         )}
-                                        Comments
-                                    </button>
-                                    <button className="bg-slate-900 text-white px-4 py-2 h-9 justify-center rounded-xl text-xs font-bold shadow-sm hover:scale-[1.02] active:scale-95 transition-all flex items-center">
-                                        <ExternalLink className="h-3.5 w-3.5 mr-2" /> Open in Cursor
-                                    </button>
+                                        {isEditing ? (
+                                            <button
+                                                onClick={handleSaveFile}
+                                                disabled={saving}
+                                                className="bg-indigo-600 text-white px-4 py-2 h-9 justify-center rounded-xl text-xs font-bold shadow-sm hover:bg-indigo-700 transition-all flex items-center active:scale-95 disabled:opacity-50"
+                                            >
+                                                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" /> : <Save className="h-3.5 w-3.5 mr-2" />}
+                                                Save Changes
+                                            </button>
+                                        ) : (
+                                            <button
+                                                onClick={() => setIsEditing(true)}
+                                                className="bg-indigo-600 text-white px-4 py-2 h-9 justify-center rounded-xl text-xs font-bold shadow-sm hover:bg-indigo-700 transition-all flex items-center active:scale-95"
+                                            >
+                                                <Edit3 className="h-3.5 w-3.5 mr-2" /> Edit File
+                                            </button>
+                                        )}
+                                        <button
+                                            onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
+                                            className={`px-4 py-2 h-9 justify-center rounded-xl text-xs font-bold transition-all flex items-center shadow-sm ${isRightPanelOpen ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 hover:text-indigo-600'}`}
+                                            title="Toggle Code Comments"
+                                        >
+                                            <MessageSquare className="h-3.5 w-3.5 mr-2" />
+                                            {(comments[selectedFile] || []).filter(c => !c.processed).length > 0 && (
+                                                <span className="bg-red-500 text-white text-[9px] px-1.5 py-0.5 rounded-full mr-2">
+                                                    {(comments[selectedFile] || []).filter(c => !c.processed).length}
+                                                </span>
+                                            )}
+                                            Comments
+                                        </button>
+                                        <button className="bg-slate-900 text-white px-4 py-2 h-9 justify-center rounded-xl text-xs font-bold shadow-sm hover:scale-[1.02] active:scale-95 transition-all flex items-center">
+                                            <ExternalLink className="h-3.5 w-3.5 mr-2" /> Open in Cursor
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="mt-2 min-w-0">
+                                    <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest leading-none mb-1">Source Path {currentFileItem?.executable ? '🔥 Executable' : ''}</div>
+                                    <div className="text-xs font-bold text-slate-800 truncate" title={`projects / ${projectName} / ${selectedFile}`}>projects / {projectName} / {selectedFile}</div>
                                 </div>
                             </div>
 
@@ -1105,10 +1169,11 @@ const ProjectNavigator = ({ onBack }) => {
                                                                                     setActiveCommentLine(null);
                                                                                     setNewCommentText('');
                                                                                 } else {
-                                                                                    const existing = fileComments.find(c => c.line === lineNumber);
-                                                                                    setNewCommentText(existing ? existing.text : '');
+                                                                                    // Always start fresh text to allow multiple threads per line
+                                                                                    setNewCommentText('');
                                                                                     setActiveCommentLine(lineNumber);
-                                                                                    setIsRightPanelOpen(true);
+                                                                                    // If comments exist, simply show sidebar too so valid context is seen
+                                                                                    if (hasComment) setIsRightPanelOpen(true);
                                                                                 }
                                                                             }}
                                                                             className={`p-1.5 rounded-lg transition-all ${hasComment ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/50' : 'bg-slate-700 text-slate-400 hover:bg-indigo-600 hover:text-white'}`}
@@ -1316,90 +1381,100 @@ const ProjectNavigator = ({ onBack }) => {
                 </div>
 
                 {/* Agent Interaction Modal */}
-                {selectedAgentForModal && (
-                    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 scale-95 animate-in fade-in zoom-in duration-200">
-                        <div className="bg-white w-full max-w-lg rounded-[40px] shadow-2xl overflow-hidden border border-slate-100">
-                            <div className="p-8">
-                                <div className="flex justify-between items-start mb-8">
-                                    <div className="flex items-center space-x-4">
-                                        <div className="bg-indigo-600 p-4 rounded-[28px] shadow-lg shadow-indigo-200">
-                                            <Bot className="h-8 w-8 text-white" />
+                {
+                    selectedAgentForModal && (
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 scale-95 animate-in fade-in zoom-in duration-200">
+                            <div className="bg-white w-full max-w-lg rounded-[40px] shadow-2xl overflow-hidden border border-slate-100">
+                                <div className="p-8">
+                                    <div className="flex justify-between items-start mb-8">
+                                        <div className="flex items-center space-x-4">
+                                            <div className="bg-indigo-600 p-4 rounded-[28px] shadow-lg shadow-indigo-200">
+                                                <Bot className="h-8 w-8 text-white" />
+                                            </div>
+                                            <div>
+                                                <h2 className="text-2xl font-bold text-slate-900 leading-tight">{selectedAgentForModal.name}</h2>
+                                                <p className="text-sm font-medium text-slate-400 mt-1 flex items-center">
+                                                    <div className="h-2 w-2 rounded-full bg-green-500 mr-2 animate-pulse" />
+                                                    Active Collaboration Persona
+                                                </p>
+                                            </div>
                                         </div>
-                                        <div>
-                                            <h2 className="text-2xl font-bold text-slate-900 leading-tight">{selectedAgentForModal.name}</h2>
-                                            <p className="text-sm font-medium text-slate-400 mt-1 flex items-center">
-                                                <div className="h-2 w-2 rounded-full bg-green-500 mr-2 animate-pulse" />
-                                                Active Collaboration Persona
-                                            </p>
-                                        </div>
-                                    </div>
-                                    <button
-                                        onClick={() => setSelectedAgentForModal(null)}
-                                        className="p-3 hover:bg-slate-100 rounded-2xl text-slate-400 transition-all active:scale-90"
-                                    >
-                                        <X className="h-6 w-6" />
-                                    </button>
-                                </div>
-
-                                <div className="bg-slate-50 p-6 rounded-[32px] border border-slate-100 mb-8">
-                                    <div className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-2">Agent Capability</div>
-                                    <p className="text-slate-600 text-sm leading-relaxed italic">
-                                        "{selectedAgentForModal.description || 'I am ready to help you evolve your project. Describe what you need me to fulfill.'}"
-                                    </p>
-                                </div>
-
-
-                                <div className="flex items-center justify-between mb-4 px-2">
-                                    <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-                                        Execution Mode
-                                    </div>
-                                    <div className="flex items-center space-x-2 bg-slate-100 p-1 rounded-lg">
                                         <button
-                                            onClick={() => setSimulationMode(true)}
-                                            className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center ${simulationMode ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                                            onClick={() => setSelectedAgentForModal(null)}
+                                            className="p-3 hover:bg-slate-100 rounded-2xl text-slate-400 transition-all active:scale-90"
                                         >
-                                            <Sparkles className="h-3 w-3 mr-1.5" /> Simulation
-                                        </button>
-                                        <button
-                                            onClick={() => setSimulationMode(false)}
-                                            className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center ${!simulationMode ? 'bg-white text-green-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                                        >
-                                            <TerminalIcon className="h-3 w-3 mr-1.5" /> Real
+                                            <X className="h-6 w-6" />
                                         </button>
                                     </div>
-                                </div>
 
-                                <div className="space-y-4">
-                                    <div className="relative">
-                                        <textarea
-                                            value={agentPrompt}
-                                            onChange={(e) => setAgentPrompt(e.target.value)}
-                                            placeholder={`What should the ${selectedAgentForModal.name} do now?`}
-                                            className="w-full bg-white border-2 border-slate-100 rounded-[32px] p-6 pr-14 text-sm focus:border-indigo-600 focus:ring-8 focus:ring-indigo-500/5 outline-none font-medium leading-relaxed shadow-sm min-h-[120px] resize-none transition-all placeholder:text-slate-300"
-                                            autoFocus
-                                        />
-                                        <div className="absolute top-4 right-4 p-2 bg-indigo-50 rounded-xl">
-                                            <MessageSquare className="h-5 w-5 text-indigo-600" />
+                                    <div className="bg-slate-50 p-6 rounded-[32px] border border-slate-100 mb-8">
+                                        <div className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-2">Agent Capability</div>
+                                        <p className="text-slate-600 text-sm leading-relaxed italic">
+                                            "{selectedAgentForModal.description || 'I am ready to help you evolve your project. Describe what you need me to fulfill.'}"
+                                        </p>
+                                    </div>
+
+                                    {/* Guarded Assign Task Logic */}
+                                    {(() => {
+                                        // Helper defined in render scope for simplicity, or could be moved up
+                                        const hasPendingComments = (comments[selectedFile] || []).some(c => !c.processed && c.status !== 'locked');
+                                        // We are not defining the handler here, just using variables. 
+                                        // Handler is defined above in component scope.
+                                        return null;
+                                    })()}
+
+
+                                    <div className="flex items-center justify-between mb-4 px-2">
+                                        <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                                            Execution Mode
+                                        </div>
+                                        <div className="flex items-center space-x-2 bg-slate-100 p-1 rounded-lg">
+                                            <button
+                                                onClick={() => setSimulationMode(true)}
+                                                className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center ${simulationMode ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                                            >
+                                                <Sparkles className="h-3 w-3 mr-1.5" /> Simulation
+                                            </button>
+                                            <button
+                                                onClick={() => setSimulationMode(false)}
+                                                className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center ${!simulationMode ? 'bg-white text-green-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                                            >
+                                                <TerminalIcon className="h-3 w-3 mr-1.5" /> Real
+                                            </button>
                                         </div>
                                     </div>
 
-                                    <button
-                                        onClick={runAgentSpecificPrompt}
-                                        disabled={(!agentPrompt && !hiddenSystemPrompt) || executing}
-                                        className="w-full bg-slate-900 text-white py-5 rounded-[32px] font-bold shadow-2xl shadow-slate-200 hover:bg-slate-800 disabled:opacity-50 transition-all flex items-center justify-center active:scale-[0.98]"
-                                    >
-                                        {executing ? (
-                                            <Loader2 className="h-5 w-5 animate-spin mr-3" />
-                                        ) : (
-                                            <Send className="h-5 w-5 mr-3" />
-                                        )}
-                                        {executing ? 'Agent is Working...' : 'Assign Task to Agent'}
-                                    </button>
+                                    <div className="space-y-4">
+                                        <div className="relative">
+                                            <textarea
+                                                value={agentPrompt}
+                                                onChange={(e) => setAgentPrompt(e.target.value)}
+                                                placeholder={`What should the ${selectedAgentForModal.name} do now?`}
+                                                className="w-full bg-white border-2 border-slate-100 rounded-[32px] p-6 pr-14 text-sm focus:border-indigo-600 focus:ring-8 focus:ring-indigo-500/5 outline-none font-medium leading-relaxed shadow-sm min-h-[120px] resize-none transition-all placeholder:text-slate-300"
+                                                autoFocus
+                                            />
+                                            <div className="absolute top-4 right-4 p-2 bg-indigo-50 rounded-xl">
+                                                <MessageSquare className="h-5 w-5 text-indigo-600" />
+                                            </div>
+                                        </div>
+
+                                        <button
+                                            onClick={handleAssignTaskRequest}
+                                            disabled={(!agentPrompt && !hiddenSystemPrompt) || executing}
+                                            className="w-full bg-slate-900 text-white py-5 rounded-[32px] font-bold shadow-2xl shadow-slate-200 hover:bg-slate-800 disabled:opacity-50 transition-all flex items-center justify-center active:scale-[0.98]"
+                                        >
+                                            {executing ? (
+                                                <Loader2 className="h-5 w-5 animate-spin mr-3" />
+                                            ) : (
+                                                <Send className="h-5 w-5 mr-3" />
+                                            )}
+                                            {executing ? 'Agent is Working...' : 'Assign Task to Agent'}
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
-                )}
+                    )}
 
                 {/* Add Agent Modal */}
                 {isAddAgentOpen && (
@@ -1449,6 +1524,18 @@ const ProjectNavigator = ({ onBack }) => {
                     </div>
                 )}
             </div>
+
+            {/* Confirmation Dialog */}
+            <ConfirmationDialog
+                isOpen={dialogConfig.isOpen}
+                onClose={closeDialog}
+                onConfirm={dialogConfig.onConfirm}
+                title={dialogConfig.title}
+                message={dialogConfig.message}
+                type={dialogConfig.type}
+                isAlert={dialogConfig.isAlert}
+                confirmText={dialogConfig.confirmText}
+            />
         </div>
     );
 };
