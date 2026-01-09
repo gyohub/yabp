@@ -182,8 +182,17 @@ const ProjectNavigator = ({ onBack }) => {
 
     const handleSaveWorkflow = async (phases) => {
         try {
+            // Extract all agents mentioned in any phase
+            const workflowAgents = [...new Set(phases.flatMap(p => p.allowedAgents || []))];
+
+            // Merge with existing project agents to ensure any newly added agents in workflow 
+            // are also added to the project team
+            const existingAgents = projectConfig?.agents || [];
+            const updatedAgents = [...new Set([...existingAgents, ...workflowAgents])];
+
             const updatedConfig = {
                 ...projectConfig,
+                agents: updatedAgents,
                 workflow: {
                     ...(projectConfig?.workflow || {}),
                     phases
@@ -193,12 +202,15 @@ const ProjectNavigator = ({ onBack }) => {
             await fetch(`http://localhost:3001/api/projects/${encodeURIComponent(projectName)}/config`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ workflow: updatedConfig.workflow })
+                body: JSON.stringify({
+                    workflow: updatedConfig.workflow,
+                    agents: updatedConfig.agents
+                })
             });
 
             setProjectConfig(updatedConfig);
             setIsWorkflowEditorOpen(false);
-            showAlert('Success', 'Workflow updated successfully!', 'success');
+            showAlert('Success', 'Workflow and project team updated successfully!', 'success');
         } catch (e) {
             console.error('Failed to save workflow', e);
             showAlert('Error', 'Failed to save workflow configuration');
@@ -849,7 +861,7 @@ const ProjectNavigator = ({ onBack }) => {
                                         value={onTheFlyPrompt}
                                         onChange={(e) => setOnTheFlyPrompt(e.target.value)}
                                         placeholder="Describe what to do..."
-                                        className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs focus:ring-4 focus:ring-indigo-500/10 outline-none min-h-[120px] font-medium resize-none shadow-sm"
+                                        className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs focus:ring-4 focus:ring-indigo-500/10 outline-none min-h-[120px] font-medium resize-none shadow-sm caret-indigo-600"
                                     />
                                     <button
                                         onClick={() => runPrompt(onTheFlyPrompt)}
@@ -1101,7 +1113,7 @@ const ProjectNavigator = ({ onBack }) => {
                                                         id="md-editor"
                                                         value={editedContent}
                                                         onChange={(e) => setEditedContent(e.target.value)}
-                                                        className="relative w-full h-full bg-white border-2 border-slate-100 rounded-[32px] p-8 text-sm focus:border-indigo-500 focus:ring-8 focus:ring-indigo-500/5 outline-none font-mono leading-relaxed shadow-2xl resize-none transition-all"
+                                                        className="relative w-full h-full bg-white border-2 border-slate-100 rounded-[32px] p-8 text-sm focus:border-indigo-500 focus:ring-8 focus:ring-indigo-500/5 outline-none font-mono leading-relaxed shadow-2xl resize-none transition-all caret-indigo-600"
                                                         placeholder="Start typing..."
                                                     />
                                                 </div>
@@ -1447,7 +1459,7 @@ const ProjectNavigator = ({ onBack }) => {
                                                     value={agentPrompt}
                                                     onChange={(e) => setAgentPrompt(e.target.value)}
                                                     placeholder={`What should the ${selectedAgentForModal.name} do now?`}
-                                                    className="w-full bg-white border-2 border-slate-100 rounded-[32px] p-6 pr-14 text-sm focus:border-indigo-600 focus:ring-8 focus:ring-indigo-500/5 outline-none font-medium leading-relaxed shadow-sm min-h-[120px] resize-none transition-all placeholder:text-slate-300"
+                                                    className="w-full bg-white border-2 border-slate-100 rounded-[32px] p-6 pr-14 text-sm focus:border-indigo-600 focus:ring-8 focus:ring-indigo-500/5 outline-none font-medium leading-relaxed shadow-sm min-h-[120px] resize-none transition-all placeholder:text-slate-300 caret-indigo-600"
                                                     autoFocus
                                                 />
                                                 <div className="absolute top-4 right-4 p-2 bg-indigo-50 rounded-xl">
